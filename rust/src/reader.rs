@@ -12,11 +12,16 @@ pub struct Reader {
 pub enum Ast {
     List(Vec<Ast>),
     Str(String),
+    Keyword(String),
     Symbol(String),
     Int(isize),
     True,
     False,
     Nil,
+    Quote(Box<Ast>),
+    Quasiquote(Box<Ast>),
+    Unquote(Box<Ast>),
+    SpliceUnquote(Box<Ast>),
 }
 
 impl Ast {
@@ -35,11 +40,16 @@ impl Ast {
             } else {
                 format!("\"{}\"", s.replace("\"", r#"\""#))
             },
+            Ast::Keyword(kw) => format!(":{}", kw),
             Ast::Symbol(sym) => sym.clone(),
             Ast::Int(i) => i.to_string(),
             Ast::True => String::from("true"),
             Ast::False => String::from("false"),
             Ast::Nil => String::from("nil"),
+            Ast::Quote(ast) => format!("(quote {})", ast),
+            Ast::Quasiquote(ast) => format!("(quasiquote {})", ast),
+            Ast::Unquote(ast) => format!("(unquote {})", ast),
+            Ast::SpliceUnquote(ast) => format!("(splice-unquote {})", ast),
         }
     }
 }
@@ -86,6 +96,22 @@ impl Reader {
                 let _ = self.next();
                 Ok(self.read_list()?)
             }
+            Some(Token::Quote) => {
+                let _ = self.next();
+                Ok(Ast::Quote(Box::new(self.read_form()?)))
+            }
+            Some(Token::Quasiquote) => {
+                let _ = self.next();
+                Ok(Ast::Quasiquote(Box::new(self.read_form()?)))
+            }
+            Some(Token::Unquote) => {
+                let _ = self.next();
+                Ok(Ast::Unquote(Box::new(self.read_form()?)))
+            }
+            Some(Token::SpliceUnquote) => {
+                let _ = self.next();
+                Ok(Ast::SpliceUnquote(Box::new(self.read_form()?)))
+            }
             _ => Ok(self.read_atom()?),
         }
     }
@@ -106,6 +132,7 @@ impl Reader {
     fn read_atom(&mut self) -> Result<Ast> {
         match self.next() {
             Some(Token::Str(s)) => Ok(Ast::Str(s)),
+            Some(Token::Keyword(kw)) => Ok(Ast::Keyword(kw)),
             Some(Token::Symbol(sym)) => Ok(Ast::Symbol(sym)),
             Some(Token::Int(i)) => Ok(Ast::Int(i)),
             Some(Token::True) => Ok(Ast::True),
@@ -128,11 +155,16 @@ enum Token {
     LParen,
     RParen,
     Symbol(String),
+    Keyword(String),
     Int(isize),
     Str(String),
     True,
     False,
     Nil,
+    Quote,
+    Quasiquote,
+    Unquote,
+    SpliceUnquote,
 }
 
 impl Tokenizer {
@@ -161,16 +193,36 @@ impl Tokenizer {
                     self.pos += 1;
                 }
                 '(' => {
-                    tokens.push(Token::LParen);
                     self.pos += 1;
+                    tokens.push(Token::LParen);
                 }
                 ')' => {
-                    tokens.push(Token::RParen);
                     self.pos += 1;
+                    tokens.push(Token::RParen);
                 }
                 '"' => {
-                    self.pos += 1;
+                    self.pos += 1; // ORDER IS IMPORTANT HERE!
                     tokens.push(self.tokenize_str()?);
+                }
+                ':' => {
+                    self.pos += 1; // ORDER IS IMPORTANT HERE!
+                    tokens.push(self.tokenize_keyword()?);
+                }
+                '\'' => {
+                    self.pos += 1;
+                    tokens.push(Token::Quote);
+                }
+                '`' => {
+                    self.pos += 1;
+                    tokens.push(Token::Quasiquote);
+                }
+                '~' if self.pos + 1 < self.input.len() && self.input[self.pos + 1] == '@' => {
+                    self.pos += 2;
+                    tokens.push(Token::SpliceUnquote);
+                }
+                '~' => {
+                    self.pos += 1;
+                    tokens.push(Token::Unquote);
                 }
                 ch if ch.is_numeric() => tokens.push(self.tokenize_int()?),
                 ch if ch.is_whitespace() || ch == ',' => self.pos += 1,
@@ -187,6 +239,33 @@ impl Tokenizer {
             }
         }
         Ok(tokens)
+    }
+
+    fn tokenize_keyword(&mut self) -> Result<Token> {
+        let mut keyword_chars = vec![];
+        'outer: while self.pos < self.input.len() {
+            match self.input[self.pos] {
+                ';' => {
+                    while self.input[self.pos] != '\n' {
+                        self.pos += 1;
+                        if self.pos == self.input.len() {
+                            break 'outer;
+                        }
+                    }
+                    self.pos += 1;
+                }
+                c if c == '(' || c == ')' || c == '"' || c == ':' || c.is_whitespace() => {
+                    if keyword_chars.is_empty() {
+                        return Err(format!("no symbol at pos {}", self.pos));
+                    } else {
+                        return Ok(Token::Keyword(keyword_chars.into_iter().collect()));
+                    }
+                }
+                c => keyword_chars.push(c),
+            }
+            self.pos += 1;
+        }
+        Ok(Token::Keyword(keyword_chars.into_iter().collect()))
     }
 
     /// Called when tokenize() encounters a " char
@@ -273,7 +352,7 @@ impl Tokenizer {
                     }
                     self.pos += 1;
                 }
-                c if c == '(' || c == ')' || c == '"' || c.is_whitespace() => {
+                c if c == '(' || c == ')' || c == '"' || c == ':' || c.is_whitespace() => {
                     if symbol_chars.is_empty() {
                         return Err(format!("no symbol at pos {}", self.pos));
                     } else {
@@ -351,6 +430,30 @@ mod tests {
     }
 
     #[test]
+    fn test_tokenize_quote() {
+        assert_eq!(
+            Tokenizer::tokenize("'1"),
+            Ok(vec![Token::Quote, Token::Int(1)])
+        );
+    }
+
+    #[test]
+    fn test_tokenize_unquote() {
+        assert_eq!(
+            Tokenizer::tokenize("~1"),
+            Ok(vec![Token::Unquote, Token::Int(1)])
+        );
+    }
+
+    #[test]
+    fn test_tokenize_splice_unquote() {
+        assert_eq!(
+            Tokenizer::tokenize("~@1"),
+            Ok(vec![Token::SpliceUnquote, Token::Int(1)])
+        );
+    }
+
+    #[test]
     fn test_tokenize() {
         assert_eq!(
             Tokenizer::tokenize("(+ 1 3)"),
@@ -372,6 +475,18 @@ mod tests {
                 Token::LParen,
                 Token::Symbol(String::from("+")),
                 Token::Int(1),
+            ])
+        );
+    }
+
+    #[test]
+    fn test_tokenize_no_whitespace() {
+        assert_eq!(
+            Tokenizer::tokenize(r#":kw1:kw2"str""#),
+            Ok(vec![
+                Token::Keyword(String::from("kw1")),
+                Token::Keyword(String::from("kw2")),
+                Token::Str(String::from("str")),
             ])
         );
     }
@@ -433,6 +548,26 @@ mod tests {
     }
 
     #[test]
+    fn test_reader_quote1() {
+        assert_eq!(
+            Reader::read_str("'1"),
+            Ok(Ast::Quote(Box::new(Ast::Int(1))))
+        );
+    }
+
+    #[test]
+    fn test_reader_quote2() {
+        assert_eq!(
+            Reader::read_str("'(1 2 3)"),
+            Ok(Ast::Quote(Box::new(Ast::List(vec![
+                Ast::Int(1),
+                Ast::Int(2),
+                Ast::Int(3),
+            ]))))
+        );
+    }
+
+    #[test]
     fn test_reader_fail1() {
         assert_eq!(
             Reader::read_str("(1"),
@@ -454,5 +589,18 @@ mod tests {
             Reader::read_str(r#"("st\"#),
             Err(String::from("EOF while processing escape char"))
         )
+    }
+
+    #[test]
+    fn test_reader_no_whitespace() {
+        assert_eq!(
+            Reader::read_str(r#"(sym:kw1:kw2"str")"#),
+            Ok(Ast::List(vec![
+                Ast::Symbol(String::from("sym")),
+                Ast::Keyword(String::from("kw1")),
+                Ast::Keyword(String::from("kw2")),
+                Ast::Str(String::from("str")),
+            ]))
+        );
     }
 }
