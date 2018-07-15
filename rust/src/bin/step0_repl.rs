@@ -1,26 +1,46 @@
 extern crate mal;
+extern crate rustyline;
 
-use mal::readline;
+use rustyline::error::ReadlineError;
+use rustyline::Editor;
 
-// read
-fn read(str: String) -> String {
-    str
+pub fn read(input: String) -> String {
+    input
 }
 
-// eval
-fn eval(ast: String) -> String {
-    ast
+pub fn eval(input: String) -> String {
+    input
 }
 
-// print
-fn print(exp: String) -> String {
-    exp
+pub fn print(input: String) -> String {
+    input
+}
+
+pub fn rep(input: String) -> String {
+    print(eval(read(input)))
 }
 
 fn main() {
+    let mut rl = Editor::<()>::new();
+    if rl.load_history("history.txt").is_err() {
+        println!("No previous history");
+    }
     loop {
-        let line = readline::mal_readline("user> ");
-        match line { None => break, _ => () }
-        println!("{}", print(eval(read(line.unwrap()))));
+        let readline = rl.readline("user> ");
+        match readline {
+            Ok(line) => println!("{}", rep(line)),
+            Err(ReadlineError::Interrupted) => {
+                println!("C-C");
+                break;
+            }
+            Err(ReadlineError::Eof) => {
+                println!("C-D");
+                break;
+            }
+            Err(err) => {
+                println!("Error: {:?}", err);
+                break;
+            }
+        }
     }
 }

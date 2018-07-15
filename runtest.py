@@ -141,7 +141,7 @@ class Runner():
                         buf = self.buf[0:end-len(prompt)]
                         self.buf = self.buf[end:]
                         self.last_prompt = prompt
-                        return buf
+                        return buf.rstrip()
         return None
 
     def writeline(self, str):
