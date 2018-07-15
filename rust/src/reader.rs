@@ -357,4 +357,28 @@ mod tests {
             ]))
         )
     }
+
+    #[test]
+    fn test_reader_fail1() {
+        assert_eq!(
+            Reader::read_str("(1"),
+            Err(String::from("expected ')', got EOF"))
+        )
+    }
+
+    #[test]
+    fn test_reader_fail2() {
+        assert_eq!(
+            Reader::read_str(r#"("st"#),
+            Err(String::from("EOF while processing string"))
+        )
+    }
+
+    #[test]
+    fn test_reader_fail3() {
+        assert_eq!(
+            Reader::read_str(r#"("st\"#),
+            Err(String::from("EOF while processing escape char"))
+        )
+    }
 }
