@@ -149,8 +149,17 @@ impl Tokenizer {
 
     fn tokenize_all(&mut self) -> Result<Vec<Token>> {
         let mut tokens = vec![];
-        while self.pos < self.input.len() {
+        'outer: while self.pos < self.input.len() {
             match self.input[self.pos] {
+                ';' => {
+                    while self.input[self.pos] != '\n' {
+                        self.pos += 1;
+                        if self.pos == self.input.len() {
+                            break 'outer;
+                        }
+                    }
+                    self.pos += 1;
+                }
                 '(' => {
                     tokens.push(Token::LParen);
                     self.pos += 1;
@@ -183,8 +192,17 @@ impl Tokenizer {
     /// Called when tokenize() encounters a " char
     fn tokenize_str(&mut self) -> Result<Token> {
         let mut str_chars = vec![];
-        while self.pos < self.input.len() {
+        'outer: while self.pos < self.input.len() {
             match self.input[self.pos] {
+                ';' => {
+                    while self.input[self.pos] != '\n' {
+                        self.pos += 1;
+                        if self.pos == self.input.len() {
+                            break 'outer;
+                        }
+                    }
+                    self.pos += 1;
+                }
                 '"' => {
                     self.pos += 1;
                     return Ok(Token::Str(str_chars.into_iter().collect()));
@@ -205,8 +223,17 @@ impl Tokenizer {
 
     fn tokenize_int(&mut self) -> Result<Token> {
         let mut int_chars = vec![];
-        while self.pos < self.input.len() {
+        'outer: while self.pos < self.input.len() {
             match self.input[self.pos] {
+                ';' => {
+                    while self.input[self.pos] != '\n' {
+                        self.pos += 1;
+                        if self.pos == self.input.len() {
+                            break 'outer;
+                        }
+                    }
+                    self.pos += 1;
+                }
                 c if c.is_numeric() => int_chars.push(c),
                 _ => {
                     if int_chars.is_empty() {
@@ -235,8 +262,17 @@ impl Tokenizer {
 
     fn tokenize_symbol(&mut self) -> Result<Token> {
         let mut symbol_chars = vec![];
-        while self.pos < self.input.len() {
+        'outer: while self.pos < self.input.len() {
             match self.input[self.pos] {
+                ';' => {
+                    while self.input[self.pos] != '\n' {
+                        self.pos += 1;
+                        if self.pos == self.input.len() {
+                            break 'outer;
+                        }
+                    }
+                    self.pos += 1;
+                }
                 c if c == '(' || c == ')' || c == '"' || c.is_whitespace() => {
                     if symbol_chars.is_empty() {
                         return Err(format!("no symbol at pos {}", self.pos));
@@ -329,6 +365,18 @@ mod tests {
     }
 
     #[test]
+    fn test_tokenize_with_comments() {
+        assert_eq!(
+            Tokenizer::tokenize("(+ 1 ; 3)"),
+            Ok(vec![
+                Token::LParen,
+                Token::Symbol(String::from("+")),
+                Token::Int(1),
+            ])
+        );
+    }
+
+    #[test]
     fn test_reader1() {
         assert_eq!(
             Reader::read_str("(+ 1 (* 2 3))"),
@@ -348,6 +396,26 @@ mod tests {
     fn test_reader2() {
         assert_eq!(
             Reader::read_str("(def f (x y) (+ x y))"),
+            Ok(Ast::List(vec![
+                Ast::Symbol(String::from("def")),
+                Ast::Symbol(String::from("f")),
+                Ast::List(vec![
+                    Ast::Symbol(String::from("x")),
+                    Ast::Symbol(String::from("y")),
+                ]),
+                Ast::List(vec![
+                    Ast::Symbol(String::from("+")),
+                    Ast::Symbol(String::from("x")),
+                    Ast::Symbol(String::from("y")),
+                ]),
+            ]))
+        )
+    }
+
+    #[test]
+    fn test_reader_with_comments() {
+        assert_eq!(
+            Reader::read_str("(def f (x y) ; (+ x y)) \n (+ x y))"),
             Ok(Ast::List(vec![
                 Ast::Symbol(String::from("def")),
                 Ast::Symbol(String::from("f")),
