@@ -15,7 +15,7 @@ pub fn eval(ast: Ast) -> Ast {
 }
 
 pub fn print(ast: Ast) -> String {
-    format!("{}", ast)
+    ast.string(false)
 }
 
 pub fn rep(input: String) -> Result<String> {

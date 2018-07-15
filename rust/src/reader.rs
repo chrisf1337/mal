@@ -19,28 +19,34 @@ pub enum Ast {
     Nil,
 }
 
-impl fmt::Display for Ast {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+impl Ast {
+    pub fn string(&self, readable: bool) -> String {
         match self {
             Ast::List(list) => {
-                write!(f, "(")?;
-                write!(
-                    f,
-                    "{}",
-                    list.into_iter()
-                        .map(|l| l.to_string())
-                        .collect::<Vec<String>>()
-                        .join(" ")
-                )?;
-                write!(f, ")")
+                let list_str = list
+                    .into_iter()
+                    .map(|l| l.string(readable))
+                    .collect::<Vec<String>>()
+                    .join(" ");
+                format!("({})", list_str)
             }
-            Ast::Str(s) => write!(f, "\"{}\"", s.replace("\"", r#"\""#)),
-            Ast::Symbol(sym) => write!(f, "{}", sym),
-            Ast::Int(i) => write!(f, "{}", i),
-            Ast::True => write!(f, "true"),
-            Ast::False => write!(f, "false"),
-            Ast::Nil => write!(f, "nil"),
+            Ast::Str(s) => if readable {
+                format!("\"{}\"", s)
+            } else {
+                format!("\"{}\"", s.replace("\"", r#"\""#))
+            },
+            Ast::Symbol(sym) => sym.clone(),
+            Ast::Int(i) => i.to_string(),
+            Ast::True => String::from("true"),
+            Ast::False => String::from("false"),
+            Ast::Nil => String::from("nil"),
         }
+    }
+}
+
+impl fmt::Display for Ast {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}", self.string(true))
     }
 }
 
