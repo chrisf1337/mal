@@ -8,9 +8,11 @@ pub struct Reader {
     pos: usize,
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, Clone)]
 pub enum Ast {
     List(Vec<Ast>),
+    Vector(Vec<Ast>),
+    Hashmap(Vec<(Ast, Ast)>),
     Str(String),
     Keyword(String),
     Symbol(String),
@@ -34,6 +36,23 @@ impl Ast {
                     .collect::<Vec<String>>()
                     .join(" ");
                 format!("({})", list_str)
+            }
+            Ast::Vector(vec) => {
+                let vec_str = vec
+                    .into_iter()
+                    .map(|l| l.string(readable))
+                    .collect::<Vec<String>>()
+                    .join(" ");
+                format!("[{}]", vec_str)
+            }
+            Ast::Hashmap(hm) => {
+                let kv_pair_str: String = hm
+                    .into_iter()
+                    .map(|(k, v)| vec![k.string(readable), v.string(readable)])
+                    .collect::<Vec<Vec<String>>>()
+                    .concat()
+                    .join(" ");
+                format!("{{{}}}", kv_pair_str)
             }
             Ast::Str(s) => if readable {
                 format!("\"{}\"", s)
@@ -96,6 +115,15 @@ impl Reader {
                 let _ = self.next();
                 Ok(self.read_list()?)
             }
+            Some(Token::LBracket) => {
+                let _ = self.next();
+                Ok(self.read_vector()?)
+            }
+            Some(Token::LBrace) => {
+                let pos = self.pos;
+                let _ = self.next();
+                Ok(self.read_hashmap(pos)?)
+            }
             Some(Token::Quote) => {
                 let _ = self.next();
                 Ok(Ast::Quote(Box::new(self.read_form()?)))
@@ -129,6 +157,40 @@ impl Reader {
         Ok(Ast::List(list))
     }
 
+    fn read_vector(&mut self) -> Result<Ast> {
+        let mut vector = vec![];
+        loop {
+            match self.peek() {
+                Some(Token::RBracket) => break,
+                Some(_) => vector.push(self.read_form()?),
+                None => return Err(String::from("expected ']', got EOF")),
+            }
+        }
+        let _ = self.next();
+        Ok(Ast::Vector(vector))
+    }
+
+    fn read_hashmap(&mut self, start_pos: usize) -> Result<Ast> {
+        let mut kv_tokens = vec![];
+        loop {
+            match self.peek() {
+                Some(Token::RBrace) => break,
+                Some(_) => kv_tokens.push(self.read_form()?),
+                None => return Err(String::from("expected '}', got EOF")),
+            }
+        }
+        let _ = self.next();
+        if kv_tokens.len() % 2 != 0 {
+            Err(format!("hashmap at pos {} is missing a value", start_pos))
+        } else {
+            let mut kv_pairs = vec![];
+            for chunk in kv_tokens.chunks(2) {
+                kv_pairs.push((chunk[0].clone(), chunk[1].clone()))
+            }
+            Ok(Ast::Hashmap(kv_pairs))
+        }
+    }
+
     fn read_atom(&mut self) -> Result<Ast> {
         match self.next() {
             Some(Token::Str(s)) => Ok(Ast::Str(s)),
@@ -154,6 +216,10 @@ struct Tokenizer {
 enum Token {
     LParen,
     RParen,
+    LBracket,
+    RBracket,
+    LBrace,
+    RBrace,
     Symbol(String),
     Keyword(String),
     Int(isize),
@@ -199,6 +265,22 @@ impl Tokenizer {
                 ')' => {
                     self.pos += 1;
                     tokens.push(Token::RParen);
+                }
+                '[' => {
+                    self.pos += 1;
+                    tokens.push(Token::LBracket);
+                }
+                ']' => {
+                    self.pos += 1;
+                    tokens.push(Token::RBracket);
+                }
+                '{' => {
+                    self.pos += 1;
+                    tokens.push(Token::LBrace);
+                }
+                '}' => {
+                    self.pos += 1;
+                    tokens.push(Token::RBrace);
                 }
                 '"' => {
                     self.pos += 1; // ORDER IS IMPORTANT HERE!
@@ -524,6 +606,36 @@ mod tests {
                     Ast::Symbol(String::from("y")),
                 ]),
             ]))
+        )
+    }
+
+    #[test]
+    fn test_reader_vector() {
+        assert_eq!(
+            Reader::read_str("[1 2 3]"),
+            Ok(Ast::Vector(vec![Ast::Int(1), Ast::Int(2), Ast::Int(3)]))
+        )
+    }
+
+    #[test]
+    fn test_reader_hashmap() {
+        assert_eq!(
+            Reader::read_str("{:a 1 :b 2}"),
+            Ok(Ast::Hashmap(vec![
+                (Ast::Keyword(String::from("a")), Ast::Int(1)),
+                (Ast::Keyword(String::from("b")), Ast::Int(2)),
+            ]))
+        );
+    }
+
+    #[test]
+    fn test_reader_hashmap_nested() {
+        assert_eq!(
+            Reader::read_str("{:a {:b 1}}"),
+            Ok(Ast::Hashmap(vec![(
+                Ast::Keyword(String::from("a")),
+                Ast::Hashmap(vec![(Ast::Keyword(String::from("b")), Ast::Int(1))]),
+            )]))
         )
     }
 
