@@ -24,6 +24,8 @@ pub enum Ast {
     Quasiquote(Box<Ast>),
     Unquote(Box<Ast>),
     SpliceUnquote(Box<Ast>),
+    Deref(Box<Ast>),              // atom
+    WithMeta(Box<Ast>, Box<Ast>), // val, meta
 }
 
 impl Ast {
@@ -69,6 +71,8 @@ impl Ast {
             Ast::Quasiquote(ast) => format!("(quasiquote {})", ast),
             Ast::Unquote(ast) => format!("(unquote {})", ast),
             Ast::SpliceUnquote(ast) => format!("(splice-unquote {})", ast),
+            Ast::Deref(atom) => format!("(deref {})", atom),
+            Ast::WithMeta(val, meta) => format!("(with-meta {} {})", val, meta),
         }
     }
 }
@@ -140,6 +144,14 @@ impl Reader {
                 let _ = self.next();
                 Ok(Ast::SpliceUnquote(Box::new(self.read_form()?)))
             }
+            Some(Token::Deref) => {
+                let _ = self.next();
+                Ok(Ast::Deref(Box::new(self.read_atom()?)))
+            }
+            Some(Token::WithMeta) => {
+                let _ = self.next();
+                Ok(self.read_with_meta()?)
+            }
             _ => Ok(self.read_atom()?),
         }
     }
@@ -204,6 +216,16 @@ impl Reader {
             None => Err(String::from("no remaining tokens")),
         }
     }
+
+    fn read_with_meta(&mut self) -> Result<Ast> {
+        match self.read_form() {
+            Ok(meta) => match self.read_form() {
+                Ok(val) => Ok(Ast::WithMeta(Box::new(val), Box::new(meta))),
+                Err(err) => Err(format!("error while reading val form: {}", err)),
+            },
+            Err(err) => Err(format!("error while reading meta form: {}", err)),
+        }
+    }
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -231,6 +253,8 @@ enum Token {
     Quasiquote,
     Unquote,
     SpliceUnquote,
+    WithMeta,
+    Deref,
 }
 
 impl Tokenizer {
@@ -305,6 +329,14 @@ impl Tokenizer {
                 '~' => {
                     self.pos += 1;
                     tokens.push(Token::Unquote);
+                }
+                '^' => {
+                    self.pos += 1;
+                    tokens.push(Token::WithMeta);
+                }
+                '@' => {
+                    self.pos += 1;
+                    tokens.push(Token::Deref);
                 }
                 ch if ch.is_numeric() => tokens.push(self.tokenize_int()?),
                 ch if ch.is_whitespace() || ch == ',' => self.pos += 1,
@@ -680,6 +712,28 @@ mod tests {
     }
 
     #[test]
+    fn test_reader_deref() {
+        assert_eq!(
+            Reader::read_str("@a"),
+            Ok(Ast::Deref(Box::new(Ast::Symbol(String::from("a")))))
+        );
+    }
+
+    #[test]
+    fn test_reader_with_meta() {
+        assert_eq!(
+            Reader::read_str(r#"^{"a" 1} [1 2 3]"#),
+            Ok(Ast::WithMeta(
+                Box::new(Ast::Vector(vec![Ast::Int(1), Ast::Int(2), Ast::Int(3)])),
+                Box::new(Ast::Hashmap(vec![(
+                    Ast::Str(String::from("a")),
+                    Ast::Int(1),
+                )]))
+            ))
+        );
+    }
+
+    #[test]
     fn test_reader_fail1() {
         assert_eq!(
             Reader::read_str("(1"),
@@ -701,6 +755,16 @@ mod tests {
             Reader::read_str(r#"("st\"#),
             Err(String::from("EOF while processing escape char"))
         )
+    }
+
+    #[test]
+    fn test_reader_with_meta_fail() {
+        assert_eq!(
+            Reader::read_str("^1"),
+            Err(String::from(
+                "error while reading val form: no remaining tokens"
+            ))
+        );
     }
 
     #[test]
