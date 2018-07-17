@@ -33,7 +33,7 @@ impl EvalEnv {
         }
     }
 
-    pub fn apply_func(
+    fn apply_func(
         &self,
         arity: usize,
         func: fn(Vec<Value>) -> Result<Value, String>,
@@ -61,6 +61,17 @@ impl EvalEnv {
                     .map(|l| self.eval(l))
                     .collect::<MalResult<Vec<Value>>>()?,
             )),
+            Value::Vector(list) => Ok(Value::Vector(
+                list.into_iter()
+                    .map(|l| self.eval(l))
+                    .collect::<MalResult<Vec<Value>>>()?,
+            )),
+            Value::Hashmap(mut hashmap) => {
+                for v in hashmap.values_mut() {
+                    *v = self.eval(v.clone())?;
+                }
+                Ok(Value::Hashmap(hashmap))
+            }
             _ => Ok(value),
         }
     }
@@ -110,5 +121,40 @@ impl Default for EvalEnv {
             },
         );
         EvalEnv { env }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_eval1() {
+        let eval_env = EvalEnv::default();
+        assert_eq!(
+            eval_env.eval(Value::List(vec![
+                Value::Symbol(String::from("+")),
+                Value::Int(1),
+                Value::Int(2),
+            ])),
+            Ok(Value::Int(3))
+        );
+    }
+
+    #[test]
+    fn test_eval2() {
+        let eval_env = EvalEnv::default();
+        assert_eq!(
+            eval_env.eval(Value::List(vec![
+                Value::Symbol(String::from("+")),
+                Value::Int(1),
+                Value::List(vec![
+                    Value::Symbol(String::from("*")),
+                    Value::Int(2),
+                    Value::Int(3),
+                ]),
+            ])),
+            Ok(Value::Int(7))
+        );
     }
 }
