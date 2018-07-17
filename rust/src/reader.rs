@@ -1,94 +1,19 @@
-use std::fmt;
+use ast::Ast;
 use std::num::ParseIntError;
 
-pub type Result<T> = ::std::result::Result<T, String>;
+pub type ReaderResult<T> = Result<T, String>;
 
 pub struct Reader {
     tokens: Vec<Token>,
     pos: usize,
 }
 
-#[derive(Debug, Eq, PartialEq, Clone)]
-pub enum Ast {
-    List(Vec<Ast>),
-    Vector(Vec<Ast>),
-    Hashmap(Vec<(Ast, Ast)>),
-    Str(String),
-    Keyword(String),
-    Symbol(String),
-    Int(isize),
-    True,
-    False,
-    Nil,
-    Quote(Box<Ast>),
-    Quasiquote(Box<Ast>),
-    Unquote(Box<Ast>),
-    SpliceUnquote(Box<Ast>),
-    Deref(Box<Ast>),              // atom
-    WithMeta(Box<Ast>, Box<Ast>), // val, meta
-}
-
-impl Ast {
-    pub fn string(&self, readable: bool) -> String {
-        match self {
-            Ast::List(list) => {
-                let list_str = list
-                    .into_iter()
-                    .map(|l| l.string(readable))
-                    .collect::<Vec<String>>()
-                    .join(" ");
-                format!("({})", list_str)
-            }
-            Ast::Vector(vec) => {
-                let vec_str = vec
-                    .into_iter()
-                    .map(|l| l.string(readable))
-                    .collect::<Vec<String>>()
-                    .join(" ");
-                format!("[{}]", vec_str)
-            }
-            Ast::Hashmap(hm) => {
-                let kv_pair_str: String = hm
-                    .into_iter()
-                    .map(|(k, v)| vec![k.string(readable), v.string(readable)])
-                    .collect::<Vec<Vec<String>>>()
-                    .concat()
-                    .join(" ");
-                format!("{{{}}}", kv_pair_str)
-            }
-            Ast::Str(s) => if readable {
-                format!("\"{}\"", s)
-            } else {
-                format!("\"{}\"", s.replace("\"", r#"\""#))
-            },
-            Ast::Keyword(kw) => format!(":{}", kw),
-            Ast::Symbol(sym) => sym.clone(),
-            Ast::Int(i) => i.to_string(),
-            Ast::True => String::from("true"),
-            Ast::False => String::from("false"),
-            Ast::Nil => String::from("nil"),
-            Ast::Quote(ast) => format!("(quote {})", ast),
-            Ast::Quasiquote(ast) => format!("(quasiquote {})", ast),
-            Ast::Unquote(ast) => format!("(unquote {})", ast),
-            Ast::SpliceUnquote(ast) => format!("(splice-unquote {})", ast),
-            Ast::Deref(atom) => format!("(deref {})", atom),
-            Ast::WithMeta(val, meta) => format!("(with-meta {} {})", val, meta),
-        }
-    }
-}
-
-impl fmt::Display for Ast {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}", self.string(true))
-    }
-}
-
 impl Reader {
-    pub fn read_str(input: &str) -> Result<Ast> {
+    pub fn read_str(input: &str) -> ReaderResult<Ast> {
         Reader::new(input)?.read_form()
     }
 
-    fn new(input: &str) -> Result<Self> {
+    fn new(input: &str) -> ReaderResult<Self> {
         Ok(Reader {
             tokens: Tokenizer::tokenize(input)?,
             pos: 0,
@@ -113,7 +38,7 @@ impl Reader {
         }
     }
 
-    fn read_form(&mut self) -> Result<Ast> {
+    fn read_form(&mut self) -> ReaderResult<Ast> {
         match self.peek() {
             Some(Token::LParen) => {
                 let _ = self.next();
@@ -156,7 +81,7 @@ impl Reader {
         }
     }
 
-    fn read_list(&mut self) -> Result<Ast> {
+    fn read_list(&mut self) -> ReaderResult<Ast> {
         let mut list = vec![];
         loop {
             match self.peek() {
@@ -169,7 +94,7 @@ impl Reader {
         Ok(Ast::List(list))
     }
 
-    fn read_vector(&mut self) -> Result<Ast> {
+    fn read_vector(&mut self) -> ReaderResult<Ast> {
         let mut vector = vec![];
         loop {
             match self.peek() {
@@ -182,7 +107,7 @@ impl Reader {
         Ok(Ast::Vector(vector))
     }
 
-    fn read_hashmap(&mut self, start_pos: usize) -> Result<Ast> {
+    fn read_hashmap(&mut self, start_pos: usize) -> ReaderResult<Ast> {
         let mut kv_tokens = vec![];
         loop {
             match self.peek() {
@@ -203,7 +128,7 @@ impl Reader {
         }
     }
 
-    fn read_atom(&mut self) -> Result<Ast> {
+    fn read_atom(&mut self) -> ReaderResult<Ast> {
         match self.next() {
             Some(Token::Str(s)) => Ok(Ast::Str(s)),
             Some(Token::Keyword(kw)) => Ok(Ast::Keyword(kw)),
@@ -217,7 +142,7 @@ impl Reader {
         }
     }
 
-    fn read_with_meta(&mut self) -> Result<Ast> {
+    fn read_with_meta(&mut self) -> ReaderResult<Ast> {
         match self.read_form() {
             Ok(meta) => match self.read_form() {
                 Ok(val) => Ok(Ast::WithMeta(Box::new(val), Box::new(meta))),
@@ -258,7 +183,7 @@ enum Token {
 }
 
 impl Tokenizer {
-    fn tokenize(input: &str) -> Result<Vec<Token>> {
+    fn tokenize(input: &str) -> ReaderResult<Vec<Token>> {
         Tokenizer::new(input).tokenize_all()
     }
 
@@ -269,7 +194,7 @@ impl Tokenizer {
         }
     }
 
-    fn tokenize_all(&mut self) -> Result<Vec<Token>> {
+    fn tokenize_all(&mut self) -> ReaderResult<Vec<Token>> {
         let mut tokens = vec![];
         'outer: while self.pos < self.input.len() {
             match self.input[self.pos] {
@@ -339,6 +264,16 @@ impl Tokenizer {
                     tokens.push(Token::Deref);
                 }
                 ch if ch.is_numeric() => tokens.push(self.tokenize_int()?),
+                '-' => {
+                    let pos = self.pos;
+                    match self.tokenize_int() {
+                        Ok(i) => tokens.push(i),
+                        Err(_) => {
+                            self.pos = pos;
+                            tokens.push(self.tokenize_symbol()?)
+                        }
+                    }
+                }
                 ch if ch.is_whitespace() || ch == ',' => self.pos += 1,
                 _ => {
                     let symbol = self.tokenize_symbol()?;
@@ -355,7 +290,7 @@ impl Tokenizer {
         Ok(tokens)
     }
 
-    fn tokenize_keyword(&mut self) -> Result<Token> {
+    fn tokenize_keyword(&mut self) -> ReaderResult<Token> {
         let mut keyword_chars = vec![];
         'outer: while self.pos < self.input.len() {
             match self.input[self.pos] {
@@ -383,7 +318,7 @@ impl Tokenizer {
     }
 
     /// Called when tokenize() encounters a " char
-    fn tokenize_str(&mut self) -> Result<Token> {
+    fn tokenize_str(&mut self) -> ReaderResult<Token> {
         let mut str_chars = vec![];
         'outer: while self.pos < self.input.len() {
             match self.input[self.pos] {
@@ -414,8 +349,12 @@ impl Tokenizer {
         Err(String::from("EOF while processing string"))
     }
 
-    fn tokenize_int(&mut self) -> Result<Token> {
+    fn tokenize_int(&mut self) -> ReaderResult<Token> {
         let mut int_chars = vec![];
+        if self.input[self.pos] == '-' {
+            int_chars.push('-');
+            self.pos += 1;
+        }
         'outer: while self.pos < self.input.len() {
             match self.input[self.pos] {
                 ';' => {
@@ -453,7 +392,7 @@ impl Tokenizer {
         ))
     }
 
-    fn tokenize_symbol(&mut self) -> Result<Token> {
+    fn tokenize_symbol(&mut self) -> ReaderResult<Token> {
         let mut symbol_chars = vec![];
         'outer: while self.pos < self.input.len() {
             match self.input[self.pos] {
@@ -524,6 +463,19 @@ mod tests {
         assert_eq!(
             Tokenizer::tokenize("123abc"),
             Ok(vec![Token::Int(123), Token::Symbol(String::from("abc"))])
+        );
+    }
+
+    #[test]
+    fn test_tokenize_negative_int1() {
+        assert_eq!(Tokenizer::tokenize("-1"), Ok(vec![Token::Int(-1)]));
+    }
+
+    #[test]
+    fn test_tokenize_negative_int2() {
+        assert_eq!(
+            Tokenizer::tokenize("-"),
+            Ok(vec![Token::Symbol(String::from("-"))])
         );
     }
 

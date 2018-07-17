@@ -4,23 +4,26 @@ extern crate rustyline;
 use rustyline::error::ReadlineError;
 use rustyline::Editor;
 
-use mal::ast::Ast;
+use mal::ast::{Ast, Value};
+use mal::env::EvalEnv;
 use mal::reader::{Reader, ReaderResult};
+use mal::MalResult;
 
 pub fn read(input: String) -> ReaderResult<Ast> {
     Reader::read_str(&input)
 }
 
-pub fn eval(ast: Ast) -> Ast {
-    ast
+pub fn eval(ast: Ast, env: &EvalEnv) -> MalResult<Value> {
+    let value = Value::from(ast);
+    env.eval(value)
 }
 
-pub fn print(ast: Ast) -> String {
+pub fn print(ast: Value) -> String {
     ast.string(false)
 }
 
-pub fn rep(input: String) -> ReaderResult<String> {
-    Ok(print(eval(read(input)?)))
+pub fn rep(input: String, env: &EvalEnv) -> MalResult<String> {
+    Ok(print(eval(read(input)?, &env)?))
 }
 
 fn main() {
@@ -28,11 +31,12 @@ fn main() {
     if rl.load_history("history.txt").is_err() {
         println!("No previous history");
     }
+    let eval_env = EvalEnv::default();
     loop {
         let readline = rl.readline("user> ");
         match readline {
             Ok(ref line) if line.is_empty() => (),
-            Ok(line) => match rep(line) {
+            Ok(line) => match rep(line, &eval_env) {
                 Ok(s) => println!("{}", s),
                 Err(err) => println!("{}", err),
             },
@@ -50,4 +54,5 @@ fn main() {
             }
         }
     }
+    rl.save_history("history.txt").unwrap();
 }
