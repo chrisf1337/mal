@@ -49,9 +49,8 @@ impl Reader {
                 Ok(self.read_vector()?)
             }
             Some(Token::LBrace) => {
-                let pos = self.pos;
                 let _ = self.next();
-                Ok(self.read_hashmap(pos)?)
+                Ok(self.read_hashmap()?)
             }
             Some(Token::Quote) => {
                 let _ = self.next();
@@ -107,7 +106,7 @@ impl Reader {
         Ok(Ast::Vector(vector))
     }
 
-    fn read_hashmap(&mut self, start_pos: usize) -> ReaderResult<Ast> {
+    fn read_hashmap(&mut self) -> ReaderResult<Ast> {
         let mut kv_tokens = vec![];
         loop {
             match self.peek() {
@@ -118,10 +117,13 @@ impl Reader {
         }
         let _ = self.next();
         if kv_tokens.len() % 2 != 0 {
-            Err(format!("hashmap at pos {} is missing a value", start_pos))
+            Err(String::from("hashmap is missing a value"))
         } else {
             let mut kv_pairs = vec![];
             for chunk in kv_tokens.chunks(2) {
+                if !chunk[0].is_atom() {
+                    return Err(format!("key {} is not an atom", chunk[0]));
+                }
                 kv_pairs.push((chunk[0].clone(), chunk[1].clone()))
             }
             Ok(Ast::Hashmap(kv_pairs))
@@ -707,6 +709,11 @@ mod tests {
             Reader::read_str(r#"("st\"#),
             Err(String::from("EOF while processing escape char"))
         )
+    }
+
+    #[test]
+    fn test_reader_fail_hashmap_nonatom_key() {
+        assert!(Reader::read_str("{(1 2 3) 1}").is_err());
     }
 
     #[test]

@@ -69,6 +69,19 @@ impl Ast {
             Ast::WithMeta(val, meta) => format!("(with-meta {} {})", val, meta),
         }
     }
+
+    pub fn is_atom(&self) -> bool {
+        match self {
+            Ast::Str(_)
+            | Ast::Keyword(_)
+            | Ast::Symbol(_)
+            | Ast::Int(_)
+            | Ast::True
+            | Ast::False
+            | Ast::Nil => true,
+            _ => false,
+        }
+    }
 }
 
 impl fmt::Display for Ast {

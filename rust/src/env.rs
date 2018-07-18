@@ -9,7 +9,11 @@ pub struct EvalEnv<'a> {
 }
 
 impl<'a> EvalEnv<'a> {
-    fn new(env: HashMap<Atom, Value>, outer: Option<&'a EvalEnv<'a>>) -> Self {
+    fn new(
+        env: HashMap<Atom, Value>,
+        outer: Option<&'a EvalEnv<'a>>,
+        binds: &[(Value, Value)],
+    ) -> Self {
         EvalEnv { env, outer }
     }
 
@@ -127,8 +131,12 @@ impl<'a> EvalEnv<'a> {
         if args.len() != 2 {
             return Err(format!("def! takes 2 args but was given {}", args.len()));
         }
+        let var = match args[0] {
+            Value::Symbol(_) => args[0].clone(),
+            ref v => return Err(format!("var {} in def! must be a symbol", v)),
+        };
         let val = self.eval(args[1].clone())?;
-        self.set(args[0].clone(), val.clone());
+        self.set(var, val.clone());
         Ok(val)
     }
 
@@ -152,10 +160,7 @@ impl<'a> EvalEnv<'a> {
 
 impl<'a> Default for EvalEnv<'a> {
     fn default() -> Self {
-        let mut env = EvalEnv {
-            env: HashMap::new(),
-            outer: None,
-        };
+        let mut env = EvalEnv::new(HashMap::new(), None, &[]);
         env.set(
             Value::Symbol(String::from("+")),
             Value::Function {
@@ -235,7 +240,7 @@ mod tests {
     }
 
     #[test]
-    fn test_def_let() {
+    fn test_def() {
         let mut eval_env = EvalEnv::default();
         assert!(
             eval_env
@@ -296,6 +301,38 @@ mod tests {
                 ]),
             ])),
             Ok(Value::Int(6))
+        );
+    }
+
+    #[test]
+    fn test_def_fail() {
+        let mut eval_env = EvalEnv::default();
+        assert!(
+            eval_env
+                .eval(Value::List(vec![
+                    Value::Symbol(String::from("def!")),
+                    Value::Keyword(String::from("a")),
+                    Value::Int(6),
+                ]))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn test_let_fail() {
+        let mut eval_env = EvalEnv::default();
+        assert!(
+            eval_env
+                .eval(Value::List(vec![
+                    Value::Symbol(String::from("let*")),
+                    Value::List(vec![Value::Keyword(String::from("c")), Value::Int(2)]),
+                    Value::List(vec![
+                        Value::Symbol(String::from("+")),
+                        Value::Symbol(String::from("c")),
+                        Value::Int(1),
+                    ]),
+                ]))
+                .is_err()
         );
     }
 }
