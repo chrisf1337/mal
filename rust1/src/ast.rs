@@ -290,3 +290,16 @@ impl fmt::Display for Value {
         write!(f, "{}", self.string(true))
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_string_escaping() {
+        assert_eq!(
+            Value::Str(String::from(r#"ab"c"#)).string(true),
+            r#""ab\"c""#
+        );
+    }
+}

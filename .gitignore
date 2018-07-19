@@ -106,6 +106,9 @@ ruby/mal.rb
 rust/target/
 rust/Cargo.lock
 rust/.cargo
+rust1/target/
+rust1/Cargo.lock
+rust1/.cargo
 r/lib
 scala/mal.jar
 scala/target

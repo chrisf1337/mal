@@ -2,9 +2,6 @@ use ast::{Atom, Value};
 use std::collections::HashMap;
 use MalResult;
 
-trait BoxClone: Fn(Vec<Value>) -> MalResult<Value> + Clone {}
-impl<T> BoxClone for T where T: Fn(Vec<Value>) -> MalResult<Value> + Clone {}
-
 #[derive(Debug)]
 pub struct EvalEnv<'a> {
     env: HashMap<Atom, Value>,
@@ -118,9 +115,9 @@ impl<'a> EvalEnv<'a> {
             return Ok(Value::Nil);
         }
         for expr in &args[..args.len() - 1] {
-            self.eval_ast(expr.clone())?;
+            self.eval(expr.clone())?;
         }
-        self.eval_ast(args[args.len() - 1].clone())
+        self.eval(args[args.len() - 1].clone())
     }
 
     fn eval_let(&mut self, args: &[Value]) -> MalResult<Value> {
