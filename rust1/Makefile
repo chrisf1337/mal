@@ -1,13 +1,10 @@
 %: src/bin/%.rs
 	cargo build --release --bin $*
-	cp target/release/$* $@
 
 .PHONY: clean stats stats-lisp
 
 clean:
 	cargo clean
-	rm -f $(STEPS)
-	rm -f mal
 
 stats: $(SOURCES)
 	@wc $^

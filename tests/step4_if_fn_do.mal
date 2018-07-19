@@ -341,7 +341,7 @@ a
 
 ;; Testing prn
 (prn)
-; 
+;
 ;=>nil
 
 (prn "")
@@ -374,11 +374,11 @@ nil
 
 ;; Testing println
 (println)
-; 
+;
 ;=>nil
 
 (println "")
-; 
+;
 ;=>nil
 
 (println "abc")
