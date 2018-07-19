@@ -19,7 +19,7 @@ pub fn eval(ast: Ast, env: &mut EvalEnv) -> MalResult<Value> {
 }
 
 pub fn print(ast: Value) -> String {
-    ast.string(false)
+    ast.string(true)
 }
 
 pub fn rep(input: String, env: &mut EvalEnv) -> MalResult<String> {

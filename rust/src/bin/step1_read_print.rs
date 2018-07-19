@@ -16,7 +16,7 @@ pub fn eval(ast: Ast) -> Ast {
 }
 
 pub fn print(ast: Ast) -> String {
-    ast.string(false)
+    ast.string(true)
 }
 
 pub fn rep(input: String) -> ReaderResult<String> {

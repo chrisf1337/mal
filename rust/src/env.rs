@@ -65,9 +65,7 @@ impl<'a> EvalEnv<'a> {
                         let func = &values[0];
                         let args = &values[1..];
                         match func {
-                            Value::CoreFunction { arity, func, .. } => {
-                                self.apply_core_func(*arity, *func, args)
-                            }
+                            Value::CoreFunction { func, .. } => self.apply_core_func(*func, args),
                             Value::Function { params, body } => {
                                 self.apply_func(params.clone(), body.clone(), args)
                             }
@@ -227,13 +225,7 @@ impl<'a> EvalEnv<'a> {
         body: Box<Value>,
         args: &[Value],
     ) -> MalResult<Value> {
-        if args.len() != params.len() {
-            return Err(format!(
-                "function has arity {}, but {} arguments were provided",
-                params.len(),
-                args.len()
-            ));
-        }
+        // TODO: varargs
         let binds = params.into_iter().zip(args.to_vec().into_iter()).collect();
         let mut eval_env = self.new_child_with_binds(binds);
         eval_env.eval(*body)
@@ -241,70 +233,110 @@ impl<'a> EvalEnv<'a> {
 
     fn apply_core_func(
         &self,
-        arity: usize,
         func: fn(Vec<Value>) -> MalResult<Value>,
         args: &[Value],
     ) -> MalResult<Value> {
-        if args.len() != arity {
-            return Err(format!(
-                "function {:?} has arity {} was applied on {} args",
-                func,
-                arity,
-                args.len()
-            ));
-        }
         func(args.to_vec())
     }
 }
 
 impl<'a> Default for EvalEnv<'a> {
     fn default() -> Self {
-        let mut env = EvalEnv::new(HashMap::new(), None, vec![]);
-        env.set(
-            Atom::Symbol(String::from("+")),
-            Value::CoreFunction {
-                name: "+",
-                arity: 2,
-                func: |args| match (args[0].clone(), args[1].clone()) {
-                    (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a + b)),
-                    (a, b) => Err(format!("cannot add {} and {}", a, b)),
+        let binds = vec![
+            (
+                Atom::Symbol(String::from("+")),
+                Value::CoreFunction {
+                    name: "+",
+                    func: |args| {
+                        let mut sum = 0;
+                        for arg in args {
+                            match arg {
+                                Value::Int(i) => sum += i,
+                                _ => return Err(format!("cannot apply + to {}", arg)),
+                            }
+                        }
+                        Ok(Value::Int(sum))
+                    },
                 },
-            },
-        );
-        env.set(
-            Atom::Symbol(String::from("-")),
-            Value::CoreFunction {
-                name: "-",
-                arity: 2,
-                func: |args| match (args[0].clone(), args[1].clone()) {
-                    (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a - b)),
-                    (a, b) => Err(format!("cannot add {} and {}", a, b)),
+            ),
+            (
+                Atom::Symbol(String::from("-")),
+                Value::CoreFunction {
+                    name: "-",
+                    func: |args| {
+                        if args.len() == 0 {
+                            return Ok(Value::Int(0));
+                        }
+                        let mut diff = match args[0] {
+                            Value::Int(i) => i,
+                            _ => return Err(format!("cannot apply - to {}", args[0])),
+                        };
+                        for arg in &args[1..] {
+                            match arg {
+                                Value::Int(i) => diff -= i,
+                                _ => return Err(format!("cannot apply - to {}", arg)),
+                            }
+                        }
+                        Ok(Value::Int(diff))
+                    },
                 },
-            },
-        );
-        env.set(
-            Atom::Symbol(String::from("*")),
-            Value::CoreFunction {
-                name: "*",
-                arity: 2,
-                func: |args| match (args[0].clone(), args[1].clone()) {
-                    (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a * b)),
-                    (a, b) => Err(format!("cannot add {} and {}", a, b)),
+            ),
+            (
+                Atom::Symbol(String::from("*")),
+                Value::CoreFunction {
+                    name: "*",
+                    func: |args| {
+                        let mut prod = 1;
+                        for arg in args {
+                            match arg {
+                                Value::Int(i) => prod *= i,
+                                _ => return Err(format!("cannot apply + to {}", arg)),
+                            }
+                        }
+                        Ok(Value::Int(prod))
+                    },
                 },
-            },
-        );
-        env.set(
-            Atom::Symbol(String::from("/")),
-            Value::CoreFunction {
-                name: "/",
-                arity: 2,
-                func: |args| match (args[0].clone(), args[1].clone()) {
-                    (Value::Int(a), Value::Int(b)) => Ok(Value::Int(a / b)),
-                    (a, b) => Err(format!("cannot add {} and {}", a, b)),
+            ),
+            (
+                Atom::Symbol(String::from("/")),
+                Value::CoreFunction {
+                    name: "/",
+                    func: |args| {
+                        if args.len() == 0 {
+                            return Ok(Value::Int(1));
+                        }
+                        let mut quot = match args[0] {
+                            Value::Int(i) => i,
+                            _ => return Err(format!("cannot apply / to {}", args[0])),
+                        };
+                        for arg in &args[1..] {
+                            match arg {
+                                Value::Int(i) => quot /= i,
+                                _ => return Err(format!("cannot apply / to {}", arg)),
+                            }
+                        }
+                        Ok(Value::Int(quot))
+                    },
                 },
-            },
-        );
-        env
+            ),
+            (
+                Atom::Symbol(String::from("prn")),
+                Value::CoreFunction {
+                    name: "prn",
+                    func: |args| {
+                        println!(
+                            "{}",
+                            args.into_iter()
+                                .map(|a| a.string(true))
+                                .collect::<Vec<String>>()
+                                .join(" ")
+                        );
+                        Ok(Value::Nil)
+                    },
+                },
+            ),
+        ];
+        EvalEnv::new(HashMap::new(), None, binds)
     }
 }
 

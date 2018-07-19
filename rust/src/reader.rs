@@ -349,7 +349,10 @@ impl Tokenizer {
                     if self.pos == self.input.len() {
                         return Err(String::from("EOF while processing escape char"));
                     }
-                    str_chars.push(self.input[self.pos]);
+                    str_chars.push(match self.input[self.pos] {
+                        'n' => '\n',
+                        c => c,
+                    });
                 }
                 c => str_chars.push(c),
             }
@@ -442,10 +445,18 @@ mod tests {
     }
 
     #[test]
-    fn test_tokenize_escape_str() {
+    fn test_tokenize_escape_str1() {
         assert_eq!(
             Tokenizer::tokenize(r#""str\"ing""#),
             Ok(vec![Token::Str(String::from("str\"ing"))])
+        );
+    }
+
+    #[test]
+    fn test_tokenize_escape_str2() {
+        assert_eq!(
+            Tokenizer::tokenize(r#""str\ning""#),
+            Ok(vec![Token::Str(String::from("str\ning"))])
         );
     }
 

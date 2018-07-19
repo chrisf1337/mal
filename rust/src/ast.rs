@@ -22,6 +22,20 @@ pub enum Ast {
     WithMeta(Box<Ast>, Box<Ast>), // val, meta
 }
 
+fn escape(s: String) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let mut out = vec![];
+    for c in chars {
+        match c {
+            '\n' => out.extend_from_slice(&['\\', 'n']),
+            '"' => out.extend_from_slice(&['\\', '"']),
+            '\\' => out.extend_from_slice(&['\\', '\\']),
+            c => out.push(c),
+        }
+    }
+    out.into_iter().collect()
+}
+
 impl Ast {
     pub fn string(&self, readable: bool) -> String {
         match self {
@@ -51,9 +65,9 @@ impl Ast {
                 format!("{{{}}}", kv_pair_str)
             }
             Ast::Str(s) => if readable {
-                format!("\"{}\"", s)
+                format!("\"{}\"", escape(s.to_string()))
             } else {
-                format!("\"{}\"", s.replace("\"", r#"\""#))
+                format!("\"{}\"", s)
             },
             Ast::Keyword(kw) => format!(":{}", kw),
             Ast::Symbol(sym) => sym.clone(),
@@ -135,9 +149,9 @@ impl Atom {
     pub fn string(&self, readable: bool) -> String {
         match self {
             Atom::Str(s) => if readable {
-                format!("\"{}\"", s)
+                format!("\"{}\"", escape(s.to_string()))
             } else {
-                format!("\"{}\"", s.replace("\"", r#"\""#))
+                format!("\"{}\"", s)
             },
             Atom::Keyword(kw) => format!(":{}", kw),
             Atom::Symbol(sym) => sym.clone(),
@@ -169,7 +183,6 @@ pub enum Value {
     Nil,
     CoreFunction {
         name: &'static str,
-        arity: usize,
         func: fn(Vec<Value>) -> MalResult<Value>,
     },
     Function {
@@ -207,9 +220,9 @@ impl Value {
                 format!("{{{}}}", kv_pair_str)
             }
             Value::Str(s) => if readable {
-                format!("\"{}\"", s)
+                format!("\"{}\"", escape(s.to_string()))
             } else {
-                format!("\"{}\"", s.replace("\"", r#"\""#))
+                format!("\"{}\"", s)
             },
             Value::Keyword(kw) => format!(":{}", kw),
             Value::Symbol(sym) => sym.clone(),
@@ -217,12 +230,16 @@ impl Value {
             Value::True => String::from("true"),
             Value::False => String::from("false"),
             Value::Nil => String::from("nil"),
-            Value::CoreFunction { name, arity, func } => {
-                format!("core func {}/{} {:?}", name, arity, func)
-            }
-            Value::Function { params, body } => {
-                format!("func/{} {:?} {}", params.len(), params, body)
-            }
+            Value::CoreFunction { name, func } => format!("core func {} {:?}", name, func),
+            Value::Function { params, body } => format!(
+                "func ({}) {}",
+                params
+                    .iter()
+                    .map(|p| p.string(true))
+                    .collect::<Vec<String>>()
+                    .join(" "),
+                body
+            ),
         }
     }
 
