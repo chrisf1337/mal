@@ -125,8 +125,6 @@ test_EXCLUDES += test^plsql^step5  # too slow for 10,000
 test_EXCLUDES += test^powershell^step5  # too slow for 10,000
 test_EXCLUDES += $(if $(filter cpp,$(haxe_MODE)),test^haxe^step5,) # cpp finishes 10,000, segfaults at 100,000
 
-perf_EXCLUDES = mal  # TODO: fix this
-
 dist_EXCLUDES += mal
 # TODO: still need to implement dist
 dist_EXCLUDES += guile io julia matlab swift
@@ -232,7 +230,7 @@ racket_STEP_TO_PROG =  racket/$($(1)).rkt
 rexx_STEP_TO_PROG =    rexx/$($(1)).rexxpp
 rpython_STEP_TO_PROG = rpython/$($(1))
 ruby_STEP_TO_PROG =    ruby/$($(1)).rb
-rust_STEP_TO_PROG =    rust/target/release/$($(1))
+rust_STEP_TO_PROG =    rust/$($(1))
 scala_STEP_TO_PROG =   scala/target/scala-2.11/classes/$($(1)).class
 scheme_STEP_TO_PROG =  $(scheme_STEP_TO_PROG_$(scheme_MODE))
 skew_STEP_TO_PROG =    skew/$($(1)).js
