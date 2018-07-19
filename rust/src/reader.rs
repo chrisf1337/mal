@@ -184,6 +184,13 @@ enum Token {
     Deref,
 }
 
+fn is_delimiter(ch: char) -> bool {
+    match ch {
+        '(' | ')' | '"' | ':' | '[' | ']' | '{' | '}' | ',' => true,
+        _ => ch.is_whitespace(),
+    }
+}
+
 impl Tokenizer {
     fn tokenize(input: &str) -> ReaderResult<Vec<Token>> {
         Tokenizer::new(input).tokenize_all()
@@ -305,7 +312,7 @@ impl Tokenizer {
                     }
                     self.pos += 1;
                 }
-                c if c == '(' || c == ')' || c == '"' || c == ':' || c.is_whitespace() => {
+                c if is_delimiter(c) => {
                     if keyword_chars.is_empty() {
                         return Err(format!("no symbol at pos {}", self.pos));
                     } else {
@@ -407,7 +414,7 @@ impl Tokenizer {
                     }
                     self.pos += 1;
                 }
-                c if c == '(' || c == ')' || c == '"' || c == ':' || c.is_whitespace() => {
+                c if is_delimiter(c) => {
                     if symbol_chars.is_empty() {
                         return Err(format!("no symbol at pos {}", self.pos));
                     } else {
@@ -555,6 +562,22 @@ mod tests {
                 Token::Keyword(String::from("kw1")),
                 Token::Keyword(String::from("kw2")),
                 Token::Str(String::from("str")),
+            ])
+        );
+    }
+
+    #[test]
+    fn test_tokenize_delimiters() {
+        assert_eq!(
+            Tokenizer::tokenize("(fn* [a] nil)"),
+            Ok(vec![
+                Token::LParen,
+                Token::Symbol(String::from("fn*")),
+                Token::LBracket,
+                Token::Symbol(String::from("a")),
+                Token::RBracket,
+                Token::Nil,
+                Token::RParen,
             ])
         );
     }
