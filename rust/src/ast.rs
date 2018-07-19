@@ -167,9 +167,14 @@ pub enum Value {
     True,
     False,
     Nil,
-    Function {
+    CoreFunction {
+        name: &'static str,
         arity: usize,
         func: fn(Vec<Value>) -> MalResult<Value>,
+    },
+    Function {
+        params: Vec<Atom>, // must be Symbols
+        body: Box<Value>,
     },
 }
 
@@ -212,7 +217,25 @@ impl Value {
             Value::True => String::from("true"),
             Value::False => String::from("false"),
             Value::Nil => String::from("nil"),
-            Value::Function { arity, func } => format!("func/{} {:?}", arity, func),
+            Value::CoreFunction { name, arity, func } => {
+                format!("core func {}/{} {:?}", name, arity, func)
+            }
+            Value::Function { params, body } => {
+                format!("func/{} {:?} {}", params.len(), params, body)
+            }
+        }
+    }
+
+    pub fn is_atom(&self) -> bool {
+        match self {
+            Value::Str(_)
+            | Value::Keyword(_)
+            | Value::Symbol(_)
+            | Value::Int(_)
+            | Value::True
+            | Value::False
+            | Value::Nil => true,
+            _ => false,
         }
     }
 }
