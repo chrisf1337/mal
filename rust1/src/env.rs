@@ -1,35 +1,46 @@
 use ast::{Atom, Value};
+use std::cell::{Ref, RefCell, RefMut};
 use std::collections::HashMap;
+use std::rc::Rc;
 use MalResult;
 
-#[derive(Debug)]
-pub struct EvalEnv<'a> {
+#[derive(Debug, Eq, PartialEq, Clone)]
+pub struct Env {
     env: HashMap<Atom, Value>,
-    outer: Option<&'a EvalEnv<'a>>,
+    outer: Option<EvalEnv>,
 }
 
-impl<'a> EvalEnv<'a> {
-    fn new(
-        env: HashMap<Atom, Value>,
-        outer: Option<&'a EvalEnv<'a>>,
-        binds: Vec<(Atom, Value)>,
-    ) -> Self {
-        let mut eval_env = EvalEnv { env, outer };
+#[derive(Debug, Eq, PartialEq, Clone)]
+pub struct EvalEnv(Rc<RefCell<Env>>);
+
+impl EvalEnv {
+    fn new(env: HashMap<Atom, Value>, outer: Option<EvalEnv>, binds: Vec<(Atom, Value)>) -> Self {
+        let mut eval_env = EvalEnv(Rc::new(RefCell::new(Env { env, outer })));
         for (var, expr) in binds {
             eval_env.set(var, expr);
         }
         eval_env
     }
 
-    fn set(&mut self, var: Atom, value: Value) {
-        self.env.insert(var, value);
+    fn borrow(&self) -> Ref<Env> {
+        self.0.borrow()
     }
 
-    fn find<'b>(&'b self, symbol: &Atom) -> Option<&'b EvalEnv> {
-        if self.env.contains_key(symbol) {
-            Some(self)
+    fn borrow_mut(&self) -> RefMut<Env> {
+        self.0.borrow_mut()
+    }
+
+    fn set(&mut self, var: Atom, value: Value) {
+        let mut env = self.borrow_mut();
+        env.env.insert(var, value);
+    }
+
+    fn find(&self, symbol: &Atom) -> Option<EvalEnv> {
+        let env = self.borrow();
+        if env.env.contains_key(symbol) {
+            Some(self.clone())
         } else {
-            match self.outer {
+            match env.outer {
                 Some(ref outer) => outer.find(symbol),
                 None => None,
             }
@@ -38,7 +49,10 @@ impl<'a> EvalEnv<'a> {
 
     fn get(&self, symbol: &Atom) -> Option<Value> {
         match self.find(symbol) {
-            Some(env) => Some(env.env[symbol].clone()),
+            Some(env) => {
+                let env = env.borrow();
+                Some(env.env[symbol].clone())
+            }
             None => None,
         }
     }
@@ -63,8 +77,8 @@ impl<'a> EvalEnv<'a> {
                         let args = &values[1..];
                         match func {
                             Value::CoreFunction { func, .. } => self.apply_core_func(*func, args),
-                            Value::Function { params, body } => {
-                                self.apply_func(params.clone(), body.clone(), args)
+                            Value::Function { params, body, env } => {
+                                self.apply_func(params.clone(), body.clone(), args, env.clone())
                             }
                             _ => Err(format!("{} is not a function and cannot be applied", func)),
                         }
@@ -78,7 +92,7 @@ impl<'a> EvalEnv<'a> {
 
     fn eval_ast(&mut self, value: Value) -> MalResult<Value> {
         match value {
-            Value::Symbol(sym) => match self.env.get(&Atom::Symbol(sym.clone())) {
+            Value::Symbol(sym) => match self.get(&Atom::Symbol(sym.clone())) {
                 Some(val) => Ok(val.clone()),
                 None => Err(format!("not in env: {}", sym)),
             },
@@ -103,15 +117,15 @@ impl<'a> EvalEnv<'a> {
     }
 
     fn new_child(&self) -> EvalEnv {
-        EvalEnv::new(self.env.clone(), Some(self), vec![])
+        EvalEnv::new(HashMap::new(), Some(self.clone()), vec![])
     }
 
     fn new_child_with_binds(&self, binds: Vec<(Atom, Value)>) -> EvalEnv {
-        EvalEnv::new(self.env.clone(), Some(self), binds)
+        EvalEnv::new(HashMap::new(), Some(self.clone()), binds)
     }
 
     fn eval_do(&mut self, args: &[Value]) -> MalResult<Value> {
-        if args.len() == 0 {
+        if args.is_empty() {
             return Ok(Value::Nil);
         }
         for expr in &args[..args.len() - 1] {
@@ -142,7 +156,7 @@ impl<'a> EvalEnv<'a> {
                     new_env.set(Atom::from(var.clone()), val);
                 }
             },
-            _ => return Err(format!("bindings must be a list")),
+            _ => return Err(String::from("bindings must be a list")),
         }
         let expr = &args[1];
         new_env.eval(expr.clone())
@@ -213,6 +227,7 @@ impl<'a> EvalEnv<'a> {
         Ok(Value::Function {
             params,
             body: Box::new(args[1].clone()),
+            env: self.new_child(),
         })
     }
 
@@ -221,11 +236,14 @@ impl<'a> EvalEnv<'a> {
         params: Vec<Atom>,
         body: Box<Value>,
         args: &[Value],
+        mut env: EvalEnv,
     ) -> MalResult<Value> {
         // TODO: varargs
-        let binds = params.into_iter().zip(args.to_vec().into_iter()).collect();
-        let mut eval_env = self.new_child_with_binds(binds);
-        eval_env.eval(*body)
+        let binds: Vec<(Atom, Value)> = params.into_iter().zip(args.to_vec().into_iter()).collect();
+        for (var, expr) in binds {
+            env.set(var, expr);
+        }
+        env.eval(*body)
     }
 
     fn apply_core_func(
@@ -237,7 +255,7 @@ impl<'a> EvalEnv<'a> {
     }
 }
 
-impl<'a> Default for EvalEnv<'a> {
+impl Default for EvalEnv {
     fn default() -> Self {
         let binds = vec![
             (
@@ -261,7 +279,7 @@ impl<'a> Default for EvalEnv<'a> {
                 Value::CoreFunction {
                     name: "-",
                     func: |args| {
-                        if args.len() == 0 {
+                        if args.is_empty() {
                             return Ok(Value::Int(0));
                         }
                         let mut diff = match args[0] {
@@ -299,7 +317,7 @@ impl<'a> Default for EvalEnv<'a> {
                 Value::CoreFunction {
                     name: "/",
                     func: |args| {
-                        if args.len() == 0 {
+                        if args.is_empty() {
                             return Ok(Value::Int(1));
                         }
                         let mut quot = match args[0] {
@@ -313,6 +331,54 @@ impl<'a> Default for EvalEnv<'a> {
                             }
                         }
                         Ok(Value::Int(quot))
+                    },
+                },
+            ),
+            (
+                Atom::Symbol(String::from("list")),
+                Value::CoreFunction {
+                    name: "list",
+                    func: |args| Ok(Value::List(args)),
+                },
+            ),
+            (
+                Atom::Symbol(String::from("list?")),
+                Value::CoreFunction {
+                    name: "list?",
+                    func: |args| {
+                        if args.is_empty() {
+                            Err(String::from("cannot call list? with 0 args"))
+                        } else {
+                            match args[0] {
+                                Value::List(_) => Ok(Value::True),
+                                _ => Ok(Value::False),
+                            }
+                        }
+                    },
+                },
+            ),
+            (
+                Atom::Symbol(String::from("empty?")),
+                Value::CoreFunction {
+                    name: "empty?",
+                    func: |args| {
+                        if args.is_empty() {
+                            Err(String::from("cannot call empty? with 0 args"))
+                        } else {
+                            match args[0] {
+                                Value::List(ref list) => if list.is_empty() {
+                                    Ok(Value::True)
+                                } else {
+                                    Ok(Value::False)
+                                },
+                                Value::Vector(ref vector) => if vector.is_empty() {
+                                    Ok(Value::True)
+                                } else {
+                                    Ok(Value::False)
+                                },
+                                _ => Ok(Value::False),
+                            }
+                        }
                     },
                 },
             ),
@@ -570,5 +636,32 @@ mod tests {
                 ]))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn test_nested_fn() {
+        let mut eval_env = EvalEnv::default();
+        assert_eq!(
+            eval_env.eval(Value::List(vec![
+                Value::List(vec![
+                    Value::List(vec![
+                        Value::Symbol(String::from("fn*")),
+                        Value::List(vec![Value::Symbol(String::from("a"))]),
+                        Value::List(vec![
+                            Value::Symbol(String::from("fn*")),
+                            Value::List(vec![Value::Symbol(String::from("b"))]),
+                            Value::List(vec![
+                                Value::Symbol(String::from("+")),
+                                Value::Symbol(String::from("a")),
+                                Value::Symbol(String::from("b")),
+                            ]),
+                        ]),
+                    ]),
+                    Value::Int(5),
+                ]),
+                Value::Int(7),
+            ])),
+            Ok(Value::Int(12))
+        )
     }
 }

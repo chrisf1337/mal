@@ -1,3 +1,4 @@
+use env::EvalEnv;
 use std::collections::HashMap;
 use std::fmt;
 use MalResult;
@@ -188,6 +189,7 @@ pub enum Value {
     Function {
         params: Vec<Atom>, // must be Symbols
         body: Box<Value>,
+        env: EvalEnv,
     },
 }
 
@@ -231,7 +233,7 @@ impl Value {
             Value::False => String::from("false"),
             Value::Nil => String::from("nil"),
             Value::CoreFunction { name, func } => format!("core func {} {:?}", name, func),
-            Value::Function { params, body } => format!(
+            Value::Function { params, body, .. } => format!(
                 "func ({}) {}",
                 params
                     .iter()
