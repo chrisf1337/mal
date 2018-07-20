@@ -23,7 +23,7 @@ pub enum Ast {
     WithMeta(Box<Ast>, Box<Ast>), // val, meta
 }
 
-fn escape(s: String) -> String {
+fn escape(s: &str) -> String {
     let chars: Vec<char> = s.chars().collect();
     let mut out = vec![];
     for c in chars {
@@ -66,7 +66,7 @@ impl Ast {
                 format!("{{{}}}", kv_pair_str)
             }
             Ast::Str(s) => if readable {
-                format!("\"{}\"", escape(s.to_string()))
+                format!("\"{}\"", escape(s))
             } else {
                 format!("\"{}\"", s)
             },
@@ -150,7 +150,7 @@ impl Atom {
     pub fn string(&self, readable: bool) -> String {
         match self {
             Atom::Str(s) => if readable {
-                format!("\"{}\"", escape(s.to_string()))
+                format!("\"{}\"", escape(s))
             } else {
                 format!("\"{}\"", s)
             },
@@ -222,7 +222,7 @@ impl Value {
                 format!("{{{}}}", kv_pair_str)
             }
             Value::Str(s) => if readable {
-                format!("\"{}\"", escape(s.to_string()))
+                format!("\"{}\"", escape(s))
             } else {
                 format!("\"{}\"", s)
             },
