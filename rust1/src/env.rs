@@ -78,7 +78,7 @@ impl EvalEnv {
                         match func {
                             Value::CoreFunction { func, .. } => self.apply_core_func(*func, args),
                             Value::Function { params, body, env } => {
-                                self.apply_func(params.clone(), body.clone(), args, env.clone())
+                                self.apply_func(params.clone(), body, args, env.clone())
                             }
                             _ => Err(format!("{} is not a function and cannot be applied", func)),
                         }
@@ -234,7 +234,7 @@ impl EvalEnv {
     fn apply_func(
         &mut self,
         params: Vec<Atom>,
-        body: Box<Value>,
+        body: &Value,
         args: &[Value],
         mut env: EvalEnv,
     ) -> MalResult<Value> {
@@ -243,7 +243,7 @@ impl EvalEnv {
         for (var, expr) in binds {
             env.set(var, expr);
         }
-        env.eval(*body)
+        env.eval(body.clone())
     }
 
     fn apply_core_func(
