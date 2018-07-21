@@ -368,10 +368,10 @@ impl<'a> Default for EvalEnv<'a> {
                         if args.is_empty() {
                             Err("cannot apply list? to 0 args".to_owned())
                         } else {
-                            match args[0] {
-                                Value::List(_) => Ok(Value::True),
-                                _ => Ok(Value::False),
-                            }
+                            Ok(match args[0] {
+                                Value::List(_) => Value::True,
+                                _ => Value::False,
+                            })
                         }
                     },
                 },
@@ -384,16 +384,12 @@ impl<'a> Default for EvalEnv<'a> {
                         if args.is_empty() {
                             Err("cannot apply empty? to 0 args".to_owned())
                         } else {
-                            match args[0] {
+                            Ok(match args[0] {
                                 Value::List(ref list) | Value::Vector(ref list) => {
-                                    if list.is_empty() {
-                                        Ok(Value::True)
-                                    } else {
-                                        Ok(Value::False)
-                                    }
+                                    Value::from(list.is_empty())
                                 }
-                                _ => Ok(Value::False),
-                            }
+                                _ => Value::False,
+                            })
                         }
                     },
                 },
@@ -425,11 +421,7 @@ impl<'a> Default for EvalEnv<'a> {
                         if args.len() < 2 {
                             return Err("cannot apply = to less than 2 args".to_owned());
                         }
-                        Ok(if args[0] == args[1] {
-                            Value::True
-                        } else {
-                            Value::False
-                        })
+                        Ok(Value::from(args[0].list_eq(&args[1])))
                     },
                 },
             ),
@@ -442,11 +434,7 @@ impl<'a> Default for EvalEnv<'a> {
                             return Err("cannot apply > to less than 2 args".to_owned());
                         }
                         match (&args[0], &args[1]) {
-                            (Value::Int(a), Value::Int(b)) => if a > b {
-                                Ok(Value::True)
-                            } else {
-                                Ok(Value::False)
-                            },
+                            (Value::Int(a), Value::Int(b)) => Ok(Value::from(a > b)),
                             _ => Err(format!(
                                 "cannot apply > to non-ints: {} {}",
                                 args[0], args[1]
@@ -464,11 +452,7 @@ impl<'a> Default for EvalEnv<'a> {
                             return Err("cannot apply < to less than 2 args".to_owned());
                         }
                         match (&args[0], &args[1]) {
-                            (Value::Int(a), Value::Int(b)) => if a < b {
-                                Ok(Value::True)
-                            } else {
-                                Ok(Value::False)
-                            },
+                            (Value::Int(a), Value::Int(b)) => Ok(Value::from(a < b)),
                             _ => Err(format!(
                                 "cannot apply < to non-ints: {} {}",
                                 args[0], args[1]
@@ -486,11 +470,7 @@ impl<'a> Default for EvalEnv<'a> {
                             return Err("cannot apply >= to less than 2 args".to_owned());
                         }
                         match (&args[0], &args[1]) {
-                            (Value::Int(a), Value::Int(b)) => if a >= b {
-                                Ok(Value::True)
-                            } else {
-                                Ok(Value::False)
-                            },
+                            (Value::Int(a), Value::Int(b)) => Ok(Value::from(a >= b)),
                             _ => Err(format!(
                                 "cannot apply >= to non-ints: {} {}",
                                 args[0], args[1]
@@ -508,11 +488,7 @@ impl<'a> Default for EvalEnv<'a> {
                             return Err("cannot apply <= to less than 2 args".to_owned());
                         }
                         match (&args[0], &args[1]) {
-                            (Value::Int(a), Value::Int(b)) => if a <= b {
-                                Ok(Value::True)
-                            } else {
-                                Ok(Value::False)
-                            },
+                            (Value::Int(a), Value::Int(b)) => Ok(Value::from(a <= b)),
                             _ => Err(format!(
                                 "cannot apply <= to non-ints: {} {}",
                                 args[0], args[1]

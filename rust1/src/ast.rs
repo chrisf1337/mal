@@ -299,6 +299,25 @@ impl Value {
         }
         val
     }
+
+    pub fn list_eq(&self, other: &Value) -> bool {
+        match (self, other) {
+            (Value::List(list), Value::Vector(vec)) | (Value::Vector(vec), Value::List(list)) => {
+                list.len() == vec.len() && vec.iter().zip(list.iter()).all(|(v, l)| v.list_eq(l))
+            }
+            _ => self == other,
+        }
+    }
+}
+
+impl From<bool> for Value {
+    fn from(b: bool) -> Self {
+        if b {
+            Value::True
+        } else {
+            Value::False
+        }
+    }
 }
 
 impl From<Ast> for Value {
