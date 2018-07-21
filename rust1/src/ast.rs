@@ -1,3 +1,4 @@
+use env::EvalEnv;
 use std::collections::HashMap;
 use std::fmt;
 use MalResult;
@@ -188,6 +189,7 @@ pub enum Value {
     Function {
         params: Vec<Atom>, // must be Symbols
         body: Box<Value>,
+        env: EvalEnv,
     },
 }
 
@@ -285,9 +287,10 @@ impl Value {
                 }
                 Value::Hashmap(hashmap)
             }
-            Value::Function { params, body } => Value::Function {
+            Value::Function { params, body, env } => Value::Function {
                 params,
                 body: Box::new(Value::subst(*body, from, to)),
+                env,
             },
             _ => val,
         }

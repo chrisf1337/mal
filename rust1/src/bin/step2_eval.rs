@@ -14,7 +14,7 @@ pub fn read(input: String) -> ReaderResult<Ast> {
     Reader::read_str(&input)
 }
 
-pub fn eval(ast: Ast, env: &mut EvalEnv) -> MalResult<Value> {
+pub fn eval(ast: Ast, env: EvalEnv) -> MalResult<Value> {
     let value = Value::from(ast);
     env::eval(env, value)
 }
@@ -23,7 +23,7 @@ pub fn print(ast: Value) -> String {
     ast.string(true)
 }
 
-pub fn rep(input: String, env: &mut EvalEnv) -> MalResult<String> {
+pub fn rep(input: String, env: EvalEnv) -> MalResult<String> {
     Ok(print(eval(read(input)?, env)?))
 }
 
@@ -32,12 +32,12 @@ fn main() {
     if rl.load_history("history.txt").is_err() {
         println!("No previous history");
     }
-    let mut eval_env = EvalEnv::default();
+    let eval_env = EvalEnv::default();
     loop {
         let readline = rl.readline("user> ");
         match readline {
             Ok(ref line) if line.is_empty() => (),
-            Ok(line) => match rep(line, &mut eval_env) {
+            Ok(line) => match rep(line, eval_env.clone()) {
                 Ok(s) => println!("{}", s),
                 Err(err) => println!("{}", err),
             },
