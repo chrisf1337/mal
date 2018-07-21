@@ -73,9 +73,9 @@ impl Ast {
             Ast::Keyword(kw) => format!(":{}", kw),
             Ast::Symbol(sym) => sym.clone(),
             Ast::Int(i) => i.to_string(),
-            Ast::True => String::from("true"),
-            Ast::False => String::from("false"),
-            Ast::Nil => String::from("nil"),
+            Ast::True => "true".to_owned(),
+            Ast::False => "false".to_owned(),
+            Ast::Nil => "nil".to_owned(),
             Ast::Quote(ast) => format!("(quote {})", ast),
             Ast::Quasiquote(ast) => format!("(quasiquote {})", ast),
             Ast::Unquote(ast) => format!("(unquote {})", ast),
@@ -157,9 +157,9 @@ impl Atom {
             Atom::Keyword(kw) => format!(":{}", kw),
             Atom::Symbol(sym) => sym.clone(),
             Atom::Int(i) => i.to_string(),
-            Atom::True => String::from("true"),
-            Atom::False => String::from("false"),
-            Atom::Nil => String::from("nil"),
+            Atom::True => "true".to_owned(),
+            Atom::False => "false".to_owned(),
+            Atom::Nil => "nil".to_owned(),
         }
     }
 }
@@ -189,7 +189,6 @@ pub enum Value {
     Function {
         params: Vec<Atom>, // must be Symbols
         body: Box<Value>,
-        env: EvalEnv,
     },
 }
 
@@ -229,9 +228,9 @@ impl Value {
             Value::Keyword(kw) => format!(":{}", kw),
             Value::Symbol(sym) => sym.clone(),
             Value::Int(i) => i.to_string(),
-            Value::True => String::from("true"),
-            Value::False => String::from("false"),
-            Value::Nil => String::from("nil"),
+            Value::True => "true".to_owned(),
+            Value::False => "false".to_owned(),
+            Value::Nil => "nil".to_owned(),
             Value::CoreFunction { name, func } => format!("core func {} {:?}", name, func),
             Value::Function { params, body, .. } => format!(
                 "func ({}) {}",
@@ -256,6 +255,50 @@ impl Value {
             | Value::Nil => true,
             _ => false,
         }
+    }
+
+    pub fn subst(val: Value, from: &Atom, to: &Value) -> Value {
+        match val {
+            Value::Str(_)
+            | Value::Symbol(_)
+            | Value::Keyword(_)
+            | Value::Int(_)
+            | Value::True
+            | Value::False
+            | Value::Nil => if val == Value::from(from.clone()) {
+                to.clone()
+            } else {
+                val
+            },
+            Value::List(list) => Value::List(
+                list.into_iter()
+                    .map(|l| Value::subst(l, from, to))
+                    .collect(),
+            ),
+            Value::Vector(list) => Value::List(
+                list.into_iter()
+                    .map(|l| Value::subst(l, from, to))
+                    .collect(),
+            ),
+            Value::Hashmap(mut hashmap) => {
+                for v in hashmap.values_mut() {
+                    *v = Value::subst(v.clone(), from, to);
+                }
+                Value::Hashmap(hashmap)
+            }
+            Value::Function { params, body } => Value::Function {
+                params,
+                body: Box::new(Value::subst(*body, from, to)),
+            },
+            _ => val,
+        }
+    }
+
+    pub fn subst_binds(mut val: Value, binds: &[(Atom, Value)]) -> Value {
+        for (var, expr) in binds {
+            val = Value::subst(val, var, expr);
+        }
+        val
     }
 }
 
@@ -287,6 +330,20 @@ impl From<Ast> for Value {
     }
 }
 
+impl From<Atom> for Value {
+    fn from(atom: Atom) -> Self {
+        match atom {
+            Atom::Str(s) => Value::Str(s),
+            Atom::Keyword(kw) => Value::Keyword(kw),
+            Atom::Symbol(sym) => Value::Symbol(sym),
+            Atom::Int(i) => Value::Int(i),
+            Atom::True => Value::True,
+            Atom::False => Value::False,
+            Atom::Nil => Value::Nil,
+        }
+    }
+}
+
 impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "{}", self.string(true))
@@ -299,9 +356,6 @@ mod test {
 
     #[test]
     fn test_string_escaping() {
-        assert_eq!(
-            Value::Str(String::from(r#"ab"c"#)).string(true),
-            r#""ab\"c""#
-        );
+        assert_eq!(Value::Str(r#"ab"c"#)).string(true.to_owned(), r#""ab\"c""#);
     }
 }

@@ -77,8 +77,8 @@ impl EvalEnv {
                         let args = &values[1..];
                         match func {
                             Value::CoreFunction { func, .. } => self.apply_core_func(*func, args),
-                            Value::Function { params, body, env } => {
-                                self.apply_func(params.clone(), body, args, env.clone())
+                            Value::Function { params, body } => {
+                                self.apply_func(params.clone(), body, args)
                             }
                             _ => Err(format!("{} is not a function and cannot be applied", func)),
                         }
@@ -156,7 +156,7 @@ impl EvalEnv {
                     new_env.set(Atom::from(var.clone()), val);
                 }
             },
-            _ => return Err(String::from("bindings must be a list")),
+            _ => return Err("bindings must be a list".to_owned()),
         }
         let expr = &args[1];
         new_env.eval(expr.clone())
@@ -227,23 +227,14 @@ impl EvalEnv {
         Ok(Value::Function {
             params,
             body: Box::new(args[1].clone()),
-            env: self.new_child(),
         })
     }
 
-    fn apply_func(
-        &mut self,
-        params: Vec<Atom>,
-        body: &Value,
-        args: &[Value],
-        mut env: EvalEnv,
-    ) -> MalResult<Value> {
+    fn apply_func(&mut self, params: Vec<Atom>, body: &Value, args: &[Value]) -> MalResult<Value> {
         // TODO: varargs
         let binds: Vec<(Atom, Value)> = params.into_iter().zip(args.to_vec().into_iter()).collect();
-        for (var, expr) in binds {
-            env.set(var, expr);
-        }
-        env.eval(body.clone())
+        let mut env = self.new_child_with_binds(binds.clone());
+        env.eval(Value::subst_binds(body.clone(), &binds))
     }
 
     fn apply_core_func(
@@ -259,7 +250,7 @@ impl Default for EvalEnv {
     fn default() -> Self {
         let binds = vec![
             (
-                Atom::Symbol(String::from("+")),
+                Atom::Symbol("+".to_owned()),
                 Value::CoreFunction {
                     name: "+",
                     func: |args| {
@@ -275,7 +266,7 @@ impl Default for EvalEnv {
                 },
             ),
             (
-                Atom::Symbol(String::from("-")),
+                Atom::Symbol("-".to_owned()),
                 Value::CoreFunction {
                     name: "-",
                     func: |args| {
@@ -297,7 +288,7 @@ impl Default for EvalEnv {
                 },
             ),
             (
-                Atom::Symbol(String::from("*")),
+                Atom::Symbol("*".to_owned()),
                 Value::CoreFunction {
                     name: "*",
                     func: |args| {
@@ -313,7 +304,7 @@ impl Default for EvalEnv {
                 },
             ),
             (
-                Atom::Symbol(String::from("/")),
+                Atom::Symbol("/".to_owned()),
                 Value::CoreFunction {
                     name: "/",
                     func: |args| {
@@ -335,19 +326,19 @@ impl Default for EvalEnv {
                 },
             ),
             (
-                Atom::Symbol(String::from("list")),
+                Atom::Symbol("list".to_owned()),
                 Value::CoreFunction {
                     name: "list",
                     func: |args| Ok(Value::List(args)),
                 },
             ),
             (
-                Atom::Symbol(String::from("list?")),
+                Atom::Symbol("list?".to_owned()),
                 Value::CoreFunction {
                     name: "list?",
                     func: |args| {
                         if args.is_empty() {
-                            Err(String::from("cannot call list? with 0 args"))
+                            Err("cannot apply list? to 0 args".to_owned())
                         } else {
                             match args[0] {
                                 Value::List(_) => Ok(Value::True),
@@ -358,24 +349,21 @@ impl Default for EvalEnv {
                 },
             ),
             (
-                Atom::Symbol(String::from("empty?")),
+                Atom::Symbol("empty?".to_owned()),
                 Value::CoreFunction {
                     name: "empty?",
                     func: |args| {
                         if args.is_empty() {
-                            Err(String::from("cannot call empty? with 0 args"))
+                            Err("cannot apply empty? to 0 args".to_owned())
                         } else {
                             match args[0] {
-                                Value::List(ref list) => if list.is_empty() {
-                                    Ok(Value::True)
-                                } else {
-                                    Ok(Value::False)
-                                },
-                                Value::Vector(ref vector) => if vector.is_empty() {
-                                    Ok(Value::True)
-                                } else {
-                                    Ok(Value::False)
-                                },
+                                Value::List(ref list) | Value::Vector(ref list) => {
+                                    if list.is_empty() {
+                                        Ok(Value::True)
+                                    } else {
+                                        Ok(Value::False)
+                                    }
+                                }
                                 _ => Ok(Value::False),
                             }
                         }
@@ -383,7 +371,64 @@ impl Default for EvalEnv {
                 },
             ),
             (
-                Atom::Symbol(String::from("prn")),
+                Atom::Symbol("count".to_owned()),
+                Value::CoreFunction {
+                    name: "count",
+                    func: |args| {
+                        if args.is_empty() {
+                            Err("cannot call count with 0 args".to_owned())
+                        } else {
+                            match args[0] {
+                                Value::List(ref list) | Value::Vector(ref list) => {
+                                    Ok(Value::Int(list.len() as isize))
+                                }
+                                Value::Nil => Ok(Value::Int(0)),
+                                _ => Err("cannot apply count to non-list".to_owned()),
+                            }
+                        }
+                    },
+                },
+            ),
+            (
+                Atom::Symbol("=".to_owned()),
+                Value::CoreFunction {
+                    name: "=",
+                    func: |args| {
+                        if args.len() < 2 {
+                            return Err("cannot apply = to less than 2 args".to_owned());
+                        }
+                        Ok(if args[0] == args[1] {
+                            Value::True
+                        } else {
+                            Value::False
+                        })
+                    },
+                },
+            ),
+            (
+                Atom::Symbol(">".to_owned()),
+                Value::CoreFunction {
+                    name: ">",
+                    func: |args| {
+                        if args.len() < 2 {
+                            return Err("cannot apply > to less than 2 args".to_owned());
+                        }
+                        match (&args[0], &args[1]) {
+                            (Value::Int(a), Value::Int(b)) => if a > b {
+                                Ok(Value::True)
+                            } else {
+                                Ok(Value::False)
+                            },
+                            _ => Err(format!(
+                                "cannot apply > to non-ints: {} {}",
+                                args[0], args[1]
+                            )),
+                        }
+                    },
+                },
+            ),
+            (
+                Atom::Symbol("prn".to_owned()),
                 Value::CoreFunction {
                     name: "prn",
                     func: |args| {
@@ -412,7 +457,7 @@ mod tests {
         let mut eval_env = EvalEnv::default();
         assert_eq!(
             eval_env.eval(Value::List(vec![
-                Value::Symbol(String::from("+")),
+                Value::Symbol("+").to_owned(),
                 Value::Int(1),
                 Value::Int(2),
             ])),
@@ -425,10 +470,10 @@ mod tests {
         let mut eval_env = EvalEnv::default();
         assert_eq!(
             eval_env.eval(Value::List(vec![
-                Value::Symbol(String::from("+")),
+                Value::Symbol("+").to_owned(),
                 Value::Int(1),
                 Value::List(vec![
-                    Value::Symbol(String::from("*")),
+                    Value::Symbol("*").to_owned(),
                     Value::Int(2),
                     Value::Int(3),
                 ]),
@@ -443,24 +488,24 @@ mod tests {
         assert!(
             eval_env
                 .eval(Value::List(vec![
-                    Value::Symbol(String::from("def!")),
-                    Value::Symbol(String::from("a")),
+                    Value::Symbol("def!").to_owned(),
+                    Value::Symbol("a").to_owned(),
                     Value::Int(6),
                 ]))
                 .is_ok()
         );
         assert_eq!(
-            eval_env.eval(Value::Symbol(String::from("a"))),
+            eval_env.eval(Value::Symbol("a")).to_owned(),
             Ok(Value::Int(6))
         );
         assert!(
             eval_env
                 .eval(Value::List(vec![
-                    Value::Symbol(String::from("def!")),
-                    Value::Symbol(String::from("b")),
+                    Value::Symbol("def!").to_owned(),
+                    Value::Symbol("b").to_owned(),
                     Value::List(vec![
-                        Value::Symbol(String::from("+")),
-                        Value::Symbol(String::from("a")),
+                        Value::Symbol("+").to_owned(),
+                        Value::Symbol("a").to_owned(),
                         Value::Int(2),
                     ]),
                 ]))
@@ -468,9 +513,9 @@ mod tests {
         );
         assert_eq!(
             eval_env.eval(Value::List(vec![
-                Value::Symbol(String::from("+")),
-                Value::Symbol(String::from("a")),
-                Value::Symbol(String::from("b")),
+                Value::Symbol("+").to_owned(),
+                Value::Symbol("a").to_owned(),
+                Value::Symbol("b").to_owned(),
             ])),
             Ok(Value::Int(14))
         );
@@ -481,21 +526,21 @@ mod tests {
         let mut eval_env = EvalEnv::default();
         assert_eq!(
             eval_env.eval(Value::List(vec![
-                Value::Symbol(String::from("let*")),
+                Value::Symbol("let*").to_owned(),
                 Value::List(vec![
-                    Value::Symbol(String::from("c")),
+                    Value::Symbol("c").to_owned(),
                     Value::Int(2),
-                    Value::Symbol(String::from("d")),
+                    Value::Symbol("d").to_owned(),
                     Value::List(vec![
-                        Value::Symbol(String::from("+")),
-                        Value::Symbol(String::from("c")),
+                        Value::Symbol("+").to_owned(),
+                        Value::Symbol("c").to_owned(),
                         Value::Int(2),
                     ]),
                 ]),
                 Value::List(vec![
-                    Value::Symbol(String::from("+")),
-                    Value::Symbol(String::from("c")),
-                    Value::Symbol(String::from("d")),
+                    Value::Symbol("+").to_owned(),
+                    Value::Symbol("c").to_owned(),
+                    Value::Symbol("d").to_owned(),
                 ]),
             ])),
             Ok(Value::Int(6))
@@ -508,8 +553,8 @@ mod tests {
         assert!(
             eval_env
                 .eval(Value::List(vec![
-                    Value::Symbol(String::from("def!")),
-                    Value::Keyword(String::from("a")),
+                    Value::Symbol("def!").to_owned(),
+                    Value::Keyword("a").to_owned(),
                     Value::Int(6),
                 ]))
                 .is_err()
@@ -522,11 +567,11 @@ mod tests {
         assert!(
             eval_env
                 .eval(Value::List(vec![
-                    Value::Symbol(String::from("let*")),
-                    Value::List(vec![Value::Keyword(String::from("c")), Value::Int(2)]),
+                    Value::Symbol("let*").to_owned(),
+                    Value::List(vec![Value::Keyword("c".to_owned()), Value::Int(2)]),
                     Value::List(vec![
-                        Value::Symbol(String::from("+")),
-                        Value::Symbol(String::from("c")),
+                        Value::Symbol("+").to_owned(),
+                        Value::Symbol("c").to_owned(),
                         Value::Int(1),
                     ]),
                 ]))
@@ -538,7 +583,7 @@ mod tests {
     fn test_do1() {
         let mut eval_env = EvalEnv::default();
         assert_eq!(
-            eval_env.eval(Value::List(vec![Value::Symbol(String::from("do"))])),
+            eval_env.eval(Value::List(vec![Value::Symbol("do".to_owned())])),
             Ok(Value::Nil)
         );
     }
@@ -548,7 +593,7 @@ mod tests {
         let mut eval_env = EvalEnv::default();
         assert_eq!(
             eval_env.eval(Value::List(vec![
-                Value::Symbol(String::from("do")),
+                Value::Symbol("do").to_owned(),
                 Value::Int(1),
             ])),
             Ok(Value::Int(1))
@@ -560,9 +605,9 @@ mod tests {
         let mut eval_env = EvalEnv::default();
         assert_eq!(
             eval_env.eval(Value::List(vec![
-                Value::Symbol(String::from("if")),
+                Value::Symbol("if").to_owned(),
                 Value::List(vec![
-                    Value::Symbol(String::from("if")),
+                    Value::Symbol("if").to_owned(),
                     Value::Nil,
                     Value::False,
                     Value::True,
@@ -580,9 +625,9 @@ mod tests {
         assert_eq!(
             eval_env.eval(Value::List(vec![
                 Value::List(vec![
-                    Value::Symbol(String::from("fn*")),
-                    Value::List(vec![Value::Symbol(String::from("a"))]),
-                    Value::Symbol(String::from("a")),
+                    Value::Symbol("fn*").to_owned(),
+                    Value::List(vec![Value::Symbol("a".to_owned())]),
+                    Value::Symbol("a").to_owned(),
                 ]),
                 Value::Int(7),
             ])),
@@ -596,15 +641,15 @@ mod tests {
         assert_eq!(
             eval_env.eval(Value::List(vec![
                 Value::List(vec![
-                    Value::Symbol(String::from("fn*")),
+                    Value::Symbol("fn*".to_owned()),
                     Value::List(vec![
-                        Value::Symbol(String::from("a")),
-                        Value::Symbol(String::from("b")),
+                        Value::Symbol("a".to_owned()),
+                        Value::Symbol("b".to_owned()),
                     ]),
                     Value::List(vec![
-                        Value::Symbol(String::from("+")),
-                        Value::Symbol(String::from("a")),
-                        Value::Symbol(String::from("b")),
+                        Value::Symbol("+".to_owned()),
+                        Value::Symbol("a".to_owned()),
+                        Value::Symbol("b".to_owned()),
                     ]),
                 ]),
                 Value::Int(2),
@@ -621,15 +666,15 @@ mod tests {
             eval_env
                 .eval(Value::List(vec![
                     Value::List(vec![
-                        Value::Symbol(String::from("fn*")),
+                        Value::Symbol("fn*").to_owned(),
                         Value::List(vec![
-                            Value::Symbol(String::from("a")),
-                            Value::Symbol(String::from("b")),
+                            Value::Symbol("a").to_owned(),
+                            Value::Symbol("b").to_owned(),
                         ]),
                         Value::List(vec![
-                            Value::Symbol(String::from("+")),
-                            Value::Symbol(String::from("a")),
-                            Value::Symbol(String::from("b")),
+                            Value::Symbol("+").to_owned(),
+                            Value::Symbol("a").to_owned(),
+                            Value::Symbol("b").to_owned(),
                         ]),
                     ]),
                     Value::Int(2),
@@ -645,15 +690,15 @@ mod tests {
             eval_env.eval(Value::List(vec![
                 Value::List(vec![
                     Value::List(vec![
-                        Value::Symbol(String::from("fn*")),
-                        Value::List(vec![Value::Symbol(String::from("a"))]),
+                        Value::Symbol("fn*").to_owned(),
+                        Value::List(vec![Value::Symbol("a".to_owned())]),
                         Value::List(vec![
-                            Value::Symbol(String::from("fn*")),
-                            Value::List(vec![Value::Symbol(String::from("b"))]),
+                            Value::Symbol("fn*").to_owned(),
+                            Value::List(vec![Value::Symbol("b".to_owned())]),
                             Value::List(vec![
-                                Value::Symbol(String::from("+")),
-                                Value::Symbol(String::from("a")),
-                                Value::Symbol(String::from("b")),
+                                Value::Symbol("+".to_owned()),
+                                Value::Symbol("a".to_owned()),
+                                Value::Symbol("b".to_owned()),
                             ]),
                         ]),
                     ]),

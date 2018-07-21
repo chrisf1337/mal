@@ -86,7 +86,7 @@ impl Reader {
             match self.peek() {
                 Some(Token::RParen) => break,
                 Some(_) => list.push(self.read_form()?),
-                None => return Err(String::from("expected ')', got EOF")),
+                None => return Err("expected ')', got EOF".to_owned()),
             }
         }
         let _ = self.next();
@@ -99,7 +99,7 @@ impl Reader {
             match self.peek() {
                 Some(Token::RBracket) => break,
                 Some(_) => vector.push(self.read_form()?),
-                None => return Err(String::from("expected ']', got EOF")),
+                None => return Err("expected ']', got EOF".to_owned()),
             }
         }
         let _ = self.next();
@@ -112,12 +112,12 @@ impl Reader {
             match self.peek() {
                 Some(Token::RBrace) => break,
                 Some(_) => kv_tokens.push(self.read_form()?),
-                None => return Err(String::from("expected '}', got EOF")),
+                None => return Err("expected '}', got EOF".to_owned()),
             }
         }
         let _ = self.next();
         if kv_tokens.len() % 2 != 0 {
-            Err(String::from("hashmap is missing a value"))
+            Err("hashmap is missing a value".to_owned())
         } else {
             let mut kv_pairs = vec![];
             for chunk in kv_tokens.chunks(2) {
@@ -140,7 +140,7 @@ impl Reader {
             Some(Token::False) => Ok(Ast::False),
             Some(Token::Nil) => Ok(Ast::Nil),
             Some(tok) => Err(format!("called read_atom() on non-atom: {:?}", tok)),
-            None => Err(String::from("no remaining tokens")),
+            None => Err("no remaining tokens".to_owned()),
         }
     }
 
@@ -347,7 +347,7 @@ impl Tokenizer {
                 '\\' => {
                     self.pos += 1;
                     if self.pos == self.input.len() {
-                        return Err(String::from("EOF while processing escape char"));
+                        return Err("EOF while processing escape char".to_owned());
                     }
                     str_chars.push(match self.input[self.pos] {
                         'n' => '\n',
@@ -358,7 +358,7 @@ impl Tokenizer {
             }
             self.pos += 1;
         }
-        Err(String::from("EOF while processing string"))
+        Err("EOF while processing string".to_owned())
     }
 
     fn tokenize_int(&mut self) -> ReaderResult<Token> {
@@ -440,7 +440,7 @@ mod tests {
     fn test_tokenize_str() {
         assert_eq!(
             Tokenizer::tokenize("\"string\""),
-            Ok(vec![Token::Str(String::from("string"))])
+            Ok(vec![Token::Str("string".to_owned())])
         );
     }
 
@@ -448,7 +448,7 @@ mod tests {
     fn test_tokenize_escape_str1() {
         assert_eq!(
             Tokenizer::tokenize(r#""str\"ing""#),
-            Ok(vec![Token::Str(String::from("str\"ing"))])
+            Ok(vec![Token::Str("str\"ing".to_owned())])
         );
     }
 
@@ -456,7 +456,7 @@ mod tests {
     fn test_tokenize_escape_str2() {
         assert_eq!(
             Tokenizer::tokenize(r#""str\ning""#),
-            Ok(vec![Token::Str(String::from("str\ning"))])
+            Ok(vec![Token::Str("str\ning".to_owned())])
         );
     }
 
@@ -482,7 +482,7 @@ mod tests {
     fn test_tokenize_int4() {
         assert_eq!(
             Tokenizer::tokenize("123abc"),
-            Ok(vec![Token::Int(123), Token::Symbol(String::from("abc"))])
+            Ok(vec![Token::Int(123), Token::Symbol("abc".to_owned())])
         );
     }
 
@@ -495,7 +495,7 @@ mod tests {
     fn test_tokenize_negative_int2() {
         assert_eq!(
             Tokenizer::tokenize("-"),
-            Ok(vec![Token::Symbol(String::from("-"))])
+            Ok(vec![Token::Symbol("-".to_owned())])
         );
     }
 
@@ -503,7 +503,7 @@ mod tests {
     fn test_tokenize_symbol1() {
         assert_eq!(
             Tokenizer::tokenize("a1b2-c3"),
-            Ok(vec![Token::Symbol(String::from("a1b2-c3"))])
+            Ok(vec![Token::Symbol("a1b2-c3".to_owned())])
         );
     }
 
@@ -545,7 +545,7 @@ mod tests {
             Tokenizer::tokenize("(+ 1 3)"),
             Ok(vec![
                 Token::LParen,
-                Token::Symbol(String::from("+")),
+                Token::Symbol("+".to_owned()),
                 Token::Int(1),
                 Token::Int(3),
                 Token::RParen,
@@ -559,7 +559,7 @@ mod tests {
             Tokenizer::tokenize("(+ 1 ; 3)"),
             Ok(vec![
                 Token::LParen,
-                Token::Symbol(String::from("+")),
+                Token::Symbol("+".to_owned()),
                 Token::Int(1),
             ])
         );
@@ -570,9 +570,9 @@ mod tests {
         assert_eq!(
             Tokenizer::tokenize(r#":kw1:kw2"str""#),
             Ok(vec![
-                Token::Keyword(String::from("kw1")),
-                Token::Keyword(String::from("kw2")),
-                Token::Str(String::from("str")),
+                Token::Keyword("kw1".to_owned()),
+                Token::Keyword("kw2".to_owned()),
+                Token::Str("str".to_owned()),
             ])
         );
     }
@@ -583,9 +583,9 @@ mod tests {
             Tokenizer::tokenize("(fn* [a] nil)"),
             Ok(vec![
                 Token::LParen,
-                Token::Symbol(String::from("fn*")),
+                Token::Symbol("fn*".to_owned()),
                 Token::LBracket,
-                Token::Symbol(String::from("a")),
+                Token::Symbol("a".to_owned()),
                 Token::RBracket,
                 Token::Nil,
                 Token::RParen,
@@ -598,13 +598,9 @@ mod tests {
         assert_eq!(
             Reader::read_str("(+ 1 (* 2 3))"),
             Ok(Ast::List(vec![
-                Ast::Symbol(String::from("+")),
+                Ast::Symbol("+".to_owned()),
                 Ast::Int(1),
-                Ast::List(vec![
-                    Ast::Symbol(String::from("*")),
-                    Ast::Int(2),
-                    Ast::Int(3),
-                ]),
+                Ast::List(vec![Ast::Symbol("*".to_owned()), Ast::Int(2), Ast::Int(3)]),
             ]))
         )
     }
@@ -614,16 +610,16 @@ mod tests {
         assert_eq!(
             Reader::read_str("(def f (x y) (+ x y))"),
             Ok(Ast::List(vec![
-                Ast::Symbol(String::from("def")),
-                Ast::Symbol(String::from("f")),
+                Ast::Symbol("def".to_owned()),
+                Ast::Symbol("f".to_owned()),
                 Ast::List(vec![
-                    Ast::Symbol(String::from("x")),
-                    Ast::Symbol(String::from("y")),
+                    Ast::Symbol("x".to_owned()),
+                    Ast::Symbol("y".to_owned()),
                 ]),
                 Ast::List(vec![
-                    Ast::Symbol(String::from("+")),
-                    Ast::Symbol(String::from("x")),
-                    Ast::Symbol(String::from("y")),
+                    Ast::Symbol("+".to_owned()),
+                    Ast::Symbol("x".to_owned()),
+                    Ast::Symbol("y".to_owned()),
                 ]),
             ]))
         )
@@ -642,8 +638,8 @@ mod tests {
         assert_eq!(
             Reader::read_str("{:a 1 :b 2}"),
             Ok(Ast::Hashmap(vec![
-                (Ast::Keyword(String::from("a")), Ast::Int(1)),
-                (Ast::Keyword(String::from("b")), Ast::Int(2)),
+                (Ast::Keyword("a".to_owned()), Ast::Int(1)),
+                (Ast::Keyword("b".to_owned()), Ast::Int(2)),
             ]))
         );
     }
@@ -653,10 +649,10 @@ mod tests {
         assert_eq!(
             Reader::read_str("{:a {:b 1}}"),
             Ok(Ast::Hashmap(vec![(
-                Ast::Keyword(String::from("a")),
-                Ast::Hashmap(vec![(Ast::Keyword(String::from("b")), Ast::Int(1))]),
+                Ast::Keyword("a".to_owned()),
+                Ast::Hashmap(vec![(Ast::Keyword("b".to_owned()), Ast::Int(1))]),
             )]))
-        )
+        );
     }
 
     #[test]
@@ -664,16 +660,16 @@ mod tests {
         assert_eq!(
             Reader::read_str("(def f (x y) ; (+ x y)) \n (+ x y))"),
             Ok(Ast::List(vec![
-                Ast::Symbol(String::from("def")),
-                Ast::Symbol(String::from("f")),
+                Ast::Symbol("def").to_owned(),
+                Ast::Symbol("f").to_owned(),
                 Ast::List(vec![
-                    Ast::Symbol(String::from("x")),
-                    Ast::Symbol(String::from("y")),
+                    Ast::Symbol("x").to_owned(),
+                    Ast::Symbol("y").to_owned(),
                 ]),
                 Ast::List(vec![
-                    Ast::Symbol(String::from("+")),
-                    Ast::Symbol(String::from("x")),
-                    Ast::Symbol(String::from("y")),
+                    Ast::Symbol("+").to_owned(),
+                    Ast::Symbol("x").to_owned(),
+                    Ast::Symbol("y").to_owned(),
                 ]),
             ]))
         )
@@ -703,7 +699,7 @@ mod tests {
     fn test_reader_deref() {
         assert_eq!(
             Reader::read_str("@a"),
-            Ok(Ast::Deref(Box::new(Ast::Symbol(String::from("a")))))
+            Ok(Ast::Deref(Box::new(Ast::Symbol("a")))).to_owned()
         );
     }
 
@@ -713,10 +709,7 @@ mod tests {
             Reader::read_str(r#"^{"a" 1} [1 2 3]"#),
             Ok(Ast::WithMeta(
                 Box::new(Ast::Vector(vec![Ast::Int(1), Ast::Int(2), Ast::Int(3)])),
-                Box::new(Ast::Hashmap(vec![(
-                    Ast::Str(String::from("a")),
-                    Ast::Int(1),
-                )]))
+                Box::new(Ast::Hashmap(vec![(Ast::Str("a").to_owned(), Ast::Int(1))]))
             ))
         );
     }
@@ -725,7 +718,7 @@ mod tests {
     fn test_reader_fail1() {
         assert_eq!(
             Reader::read_str("(1"),
-            Err(String::from("expected ')', got EOF"))
+            Err("expected ')', got EOF").to_owned()
         )
     }
 
@@ -733,7 +726,7 @@ mod tests {
     fn test_reader_fail2() {
         assert_eq!(
             Reader::read_str(r#"("st"#),
-            Err(String::from("EOF while processing string"))
+            Err("EOF while processing string").to_owned()
         )
     }
 
@@ -741,7 +734,7 @@ mod tests {
     fn test_reader_fail3() {
         assert_eq!(
             Reader::read_str(r#"("st\"#),
-            Err(String::from("EOF while processing escape char"))
+            Err("EOF while processing escape char").to_owned()
         )
     }
 
@@ -765,10 +758,10 @@ mod tests {
         assert_eq!(
             Reader::read_str(r#"(sym:kw1:kw2"str")"#),
             Ok(Ast::List(vec![
-                Ast::Symbol(String::from("sym")),
-                Ast::Keyword(String::from("kw1")),
-                Ast::Keyword(String::from("kw2")),
-                Ast::Str(String::from("str")),
+                Ast::Symbol("sym").to_owned(),
+                Ast::Keyword("kw1").to_owned(),
+                Ast::Keyword("kw2").to_owned(),
+                Ast::Str("str").to_owned(),
             ]))
         );
     }
