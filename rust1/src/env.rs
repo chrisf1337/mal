@@ -168,8 +168,7 @@ pub fn eval(mut eval_env: EvalEnv, mut value: Value) -> MalResult<Value> {
                     let before_params = params[..pos].to_vec();
                     let variadic_param = &params[pos + 1];
                     let before_args = args[..pos].to_vec();
-                    let mut variadic_args = vec![Value::Symbol("list".to_string())];
-                    variadic_args.extend_from_slice(&args[pos..]);
+                    let mut variadic_args = args[pos..].to_vec();
                     let mut binds: Vec<(Atom, Value)> = before_params
                       .into_iter()
                       .zip(before_args.into_iter())
@@ -189,9 +188,8 @@ pub fn eval(mut eval_env: EvalEnv, mut value: Value) -> MalResult<Value> {
                     params.into_iter().zip(args.to_vec().into_iter()).collect()
                   }
                 };
-
                 eval_env = env.new_child_with_binds(binds.clone());
-                value = Value::subst_binds(*(body.clone()), &binds);
+                value = *(body.clone());
                 continue;
               }
               _ => return Err(format!("{} is not a function and cannot be applied", func)),
