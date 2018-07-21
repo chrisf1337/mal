@@ -414,6 +414,100 @@ impl<'a> Default for EvalEnv<'a> {
                 },
             ),
             (
+                Atom::Symbol("<".to_owned()),
+                Value::CoreFunction {
+                    name: "<",
+                    func: |args| {
+                        if args.len() < 2 {
+                            return Err("cannot apply < to less than 2 args".to_owned());
+                        }
+                        match (&args[0], &args[1]) {
+                            (Value::Int(a), Value::Int(b)) => if a < b {
+                                Ok(Value::True)
+                            } else {
+                                Ok(Value::False)
+                            },
+                            _ => Err(format!(
+                                "cannot apply < to non-ints: {} {}",
+                                args[0], args[1]
+                            )),
+                        }
+                    },
+                },
+            ),
+            (
+                Atom::Symbol(">=".to_owned()),
+                Value::CoreFunction {
+                    name: ">=",
+                    func: |args| {
+                        if args.len() < 2 {
+                            return Err("cannot apply >= to less than 2 args".to_owned());
+                        }
+                        match (&args[0], &args[1]) {
+                            (Value::Int(a), Value::Int(b)) => if a >= b {
+                                Ok(Value::True)
+                            } else {
+                                Ok(Value::False)
+                            },
+                            _ => Err(format!(
+                                "cannot apply >= to non-ints: {} {}",
+                                args[0], args[1]
+                            )),
+                        }
+                    },
+                },
+            ),
+            (
+                Atom::Symbol("<=".to_owned()),
+                Value::CoreFunction {
+                    name: "<=",
+                    func: |args| {
+                        if args.len() < 2 {
+                            return Err("cannot apply <= to less than 2 args".to_owned());
+                        }
+                        match (&args[0], &args[1]) {
+                            (Value::Int(a), Value::Int(b)) => if a <= b {
+                                Ok(Value::True)
+                            } else {
+                                Ok(Value::False)
+                            },
+                            _ => Err(format!(
+                                "cannot apply <= to non-ints: {} {}",
+                                args[0], args[1]
+                            )),
+                        }
+                    },
+                },
+            ),
+            (
+                Atom::Symbol("pr-str".to_owned()),
+                Value::CoreFunction {
+                    name: "pr-str",
+                    func: |args| {
+                        Ok(Value::Str(
+                            args.into_iter()
+                                .map(|a| a.string(true))
+                                .collect::<Vec<String>>()
+                                .join(" "),
+                        ))
+                    },
+                },
+            ),
+            (
+                Atom::Symbol("str".to_owned()),
+                Value::CoreFunction {
+                    name: "str",
+                    func: |args| {
+                        Ok(Value::Str(
+                            args.into_iter()
+                                .map(|a| a.string(false))
+                                .collect::<Vec<String>>()
+                                .join(""),
+                        ))
+                    },
+                },
+            ),
+            (
                 Atom::Symbol("prn".to_owned()),
                 Value::CoreFunction {
                     name: "prn",
@@ -422,6 +516,22 @@ impl<'a> Default for EvalEnv<'a> {
                             "{}",
                             args.into_iter()
                                 .map(|a| a.string(true))
+                                .collect::<Vec<String>>()
+                                .join(" ")
+                        );
+                        Ok(Value::Nil)
+                    },
+                },
+            ),
+            (
+                Atom::Symbol("println".to_owned()),
+                Value::CoreFunction {
+                    name: "println",
+                    func: |args| {
+                        println!(
+                            "{}",
+                            args.into_iter()
+                                .map(|a| a.string(false))
                                 .collect::<Vec<String>>()
                                 .join(" ")
                         );

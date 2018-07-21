@@ -67,7 +67,7 @@ impl Ast {
             Ast::Str(s) => if readable {
                 format!("\"{}\"", escape(s))
             } else {
-                format!("\"{}\"", s)
+                s.clone()
             },
             Ast::Keyword(kw) => format!(":{}", kw),
             Ast::Symbol(sym) => sym.clone(),
@@ -151,7 +151,7 @@ impl Atom {
             Atom::Str(s) => if readable {
                 format!("\"{}\"", escape(s))
             } else {
-                format!("\"{}\"", s)
+                s.clone()
             },
             Atom::Keyword(kw) => format!(":{}", kw),
             Atom::Symbol(sym) => sym.clone(),
@@ -222,7 +222,7 @@ impl Value {
             Value::Str(s) => if readable {
                 format!("\"{}\"", escape(s))
             } else {
-                format!("\"{}\"", s)
+                s.clone()
             },
             Value::Keyword(kw) => format!(":{}", kw),
             Value::Symbol(sym) => sym.clone(),
