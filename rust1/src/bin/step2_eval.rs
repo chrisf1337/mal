@@ -5,6 +5,7 @@ use rustyline::error::ReadlineError;
 use rustyline::Editor;
 
 use mal::ast::{Ast, Value};
+use mal::env;
 use mal::env::EvalEnv;
 use mal::reader::{Reader, ReaderResult};
 use mal::MalResult;
@@ -15,7 +16,7 @@ pub fn read(input: String) -> ReaderResult<Ast> {
 
 pub fn eval(ast: Ast, env: &mut EvalEnv) -> MalResult<Value> {
     let value = Value::from(ast);
-    env.eval(value)
+    env::eval(env, value)
 }
 
 pub fn print(ast: Value) -> String {

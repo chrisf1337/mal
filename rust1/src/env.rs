@@ -43,65 +43,6 @@ impl<'a> EvalEnv<'a> {
         }
     }
 
-    pub fn eval(&mut self, value: Value) -> MalResult<Value> {
-        match value {
-            Value::List(list) => if list.is_empty() {
-                Ok(Value::List(list))
-            } else {
-                match list[0] {
-                    Value::Symbol(ref sym) if sym == "def!" => return self.eval_def(&list[1..]),
-                    Value::Symbol(ref sym) if sym == "let*" => return self.eval_let(&list[1..]),
-                    Value::Symbol(ref sym) if sym == "do" => return self.eval_do(&list[1..]),
-                    Value::Symbol(ref sym) if sym == "if" => return self.eval_if(&list[1..]),
-                    Value::Symbol(ref sym) if sym == "fn*" => return self.eval_fn(&list[1..]),
-                    _ => (),
-                }
-                let values = self.eval_ast(Value::List(list))?;
-                match values {
-                    Value::List(values) => {
-                        let func = &values[0];
-                        let args = &values[1..];
-                        match func {
-                            Value::CoreFunction { func, .. } => self.apply_core_func(*func, args),
-                            Value::Function { params, body } => {
-                                self.apply_func(func, params.clone(), body, args)
-                            }
-                            _ => Err(format!("{} is not a function and cannot be applied", func)),
-                        }
-                    }
-                    _ => unreachable!(),
-                }
-            },
-            value => self.eval_ast(value),
-        }
-    }
-
-    fn eval_ast(&mut self, value: Value) -> MalResult<Value> {
-        match value {
-            Value::Symbol(sym) => match self.get(&Atom::Symbol(sym.clone())) {
-                Some(val) => Ok(val.clone()),
-                None => Err(format!("not in env: {}", sym)),
-            },
-            Value::List(list) => Ok(Value::List(
-                list.into_iter()
-                    .map(|l| self.eval(l))
-                    .collect::<MalResult<Vec<Value>>>()?,
-            )),
-            Value::Vector(list) => Ok(Value::Vector(
-                list.into_iter()
-                    .map(|l| self.eval(l))
-                    .collect::<MalResult<Vec<Value>>>()?,
-            )),
-            Value::Hashmap(mut hashmap) => {
-                for v in hashmap.values_mut() {
-                    *v = self.eval(v.clone())?;
-                }
-                Ok(Value::Hashmap(hashmap))
-            }
-            _ => Ok(value),
-        }
-    }
-
     fn new_child(&self) -> EvalEnv {
         EvalEnv::new(HashMap::new(), Some(self), vec![])
     }
@@ -109,169 +50,224 @@ impl<'a> EvalEnv<'a> {
     fn new_child_with_binds(&self, binds: Vec<(Atom, Value)>) -> EvalEnv {
         EvalEnv::new(HashMap::new(), Some(self), binds)
     }
+}
 
-    fn eval_do(&mut self, args: &[Value]) -> MalResult<Value> {
-        if args.is_empty() {
-            return Ok(Value::Nil);
-        }
-        for expr in &args[..args.len() - 1] {
-            self.eval(expr.clone())?;
-        }
-        self.eval(args[args.len() - 1].clone())
-    }
-
-    fn eval_let(&mut self, args: &[Value]) -> MalResult<Value> {
-        if args.len() != 2 {
-            return Err(format!("let* takes 2 args but was given {}", args.len()));
-        }
-        let mut new_env = self.new_child();
-        let bindings = &args[0];
-        match bindings {
-            Value::List(list) | Value::Vector(list) => if list.len() % 2 != 0 {
-                return Err(format!(
-                    "bindings list must have an even number of elements but has {}",
-                    list.len()
-                ));
-            } else {
-                for chunk in list.chunks(2) {
-                    let var = match &chunk[0] {
-                        v @ Value::Symbol(_) => v,
-                        var => return Err(format!("var {} in binding list must be a symbol", var)),
-                    };
-                    let val = new_env.eval(chunk[1].clone())?;
-                    new_env.set(Atom::from(var.clone()), val);
-                }
-            },
-            _ => return Err("bindings must be a list".to_owned()),
-        }
-        let expr = &args[1];
-        new_env.eval(expr.clone())
-    }
-
-    fn eval_def(&mut self, args: &[Value]) -> MalResult<Value> {
-        if args.len() != 2 {
-            return Err(format!("def! takes 2 args but was given {}", args.len()));
-        }
-        let var = match args[0] {
-            Value::Symbol(_) => args[0].clone(),
-            ref v => return Err(format!("var {} in def! must be a symbol", v)),
-        };
-        let val = self.eval(args[1].clone())?;
-        self.set(Atom::from(var), val.clone());
-        Ok(val)
-    }
-
-    fn eval_if(&mut self, args: &[Value]) -> MalResult<Value> {
-        if args.len() < 2 {
-            return Err(format!(
-                "if must have either 2 or 3 args but was given {}",
-                args.len()
-            ));
-        }
-        let cond = &args[0];
-        let then_expr = &args[1];
-        let else_expr = if args.len() == 3 {
-            Some(&args[2])
+pub fn eval(eval_env: &mut EvalEnv, value: Value) -> MalResult<Value> {
+    match value {
+        Value::List(list) => if list.is_empty() {
+            Ok(Value::List(list))
         } else {
-            None
-        };
-        match self.eval(cond.clone())? {
-            Value::Nil | Value::False => match else_expr {
-                Some(else_expr) => self.eval(else_expr.clone()),
-                _ => Ok(Value::Nil),
-            },
-            _ => self.eval(then_expr.clone()),
-        }
-    }
-
-    fn eval_fn(&mut self, args: &[Value]) -> MalResult<Value> {
-        if args.len() != 2 {
-            return Err(format!("fn* must have 2 args but was given {}", args.len()));
-        }
-        let params: Vec<Atom> = match args[0] {
-            Value::List(ref list) => list
-                .iter()
-                .map(|l| match l {
-                    Value::Symbol(_) => Ok(Atom::from(l.clone())),
-                    _ => Err(format!("param {} is not a symbol", l)),
-                })
-                .collect::<MalResult<Vec<Atom>>>()?,
-            Value::Vector(ref vector) => vector
-                .iter()
-                .map(|v| match v {
-                    Value::Symbol(_) => Ok(Atom::from(v.clone())),
-                    _ => Err(format!("param {} is not a symbol", v)),
-                })
-                .collect::<MalResult<Vec<Atom>>>()?,
-            _ => {
-                return Err(format!(
-                    "params list must be either a vector or list, got {}",
-                    args[0]
-                ))
+            match list[0] {
+                Value::Symbol(ref sym) if sym == "def!" => return eval_def(eval_env, &list[1..]),
+                Value::Symbol(ref sym) if sym == "let*" => return eval_let(eval_env, &list[1..]),
+                Value::Symbol(ref sym) if sym == "do" => return eval_do(eval_env, &list[1..]),
+                Value::Symbol(ref sym) if sym == "if" => return eval_if(eval_env, &list[1..]),
+                Value::Symbol(ref sym) if sym == "fn*" => return eval_fn(&list[1..]),
+                _ => (),
             }
-        };
-        Ok(Value::Function {
-            params,
-            body: Box::new(args[1].clone()),
-        })
+            let values = eval_ast(eval_env, Value::List(list))?;
+            match values {
+                Value::List(values) => {
+                    let func = &values[0];
+                    let args = &values[1..];
+                    match func {
+                        Value::CoreFunction { func, .. } => apply_core_func(*func, args),
+                        Value::Function { params, body } => {
+                            apply_func(eval_env, func, params.clone(), body, args)
+                        }
+                        _ => Err(format!("{} is not a function and cannot be applied", func)),
+                    }
+                }
+                _ => unreachable!(),
+            }
+        },
+        value => eval_ast(eval_env, value),
     }
+}
 
-    fn apply_func(
-        &mut self,
-        func: &Value,
-        params: Vec<Atom>,
-        body: &Value,
-        args: &[Value],
-    ) -> MalResult<Value> {
-        // TODO: varargs
-        let binds: Vec<(Atom, Value)> = match params
+fn eval_ast(eval_env: &mut EvalEnv, value: Value) -> MalResult<Value> {
+    match value {
+        Value::Symbol(sym) => match eval_env.get(&Atom::Symbol(sym.clone())) {
+            Some(val) => Ok(val.clone()),
+            None => Err(format!("not in env: {}", sym)),
+        },
+        Value::List(list) => Ok(Value::List(
+            list.into_iter()
+                .map(|l| eval(eval_env, l))
+                .collect::<MalResult<Vec<Value>>>()?,
+        )),
+        Value::Vector(list) => Ok(Value::Vector(
+            list.into_iter()
+                .map(|l| eval(eval_env, l))
+                .collect::<MalResult<Vec<Value>>>()?,
+        )),
+        Value::Hashmap(mut hashmap) => {
+            for v in hashmap.values_mut() {
+                *v = eval(eval_env, v.clone())?;
+            }
+            Ok(Value::Hashmap(hashmap))
+        }
+        _ => Ok(value),
+    }
+}
+
+fn eval_do(eval_env: &mut EvalEnv, args: &[Value]) -> MalResult<Value> {
+    if args.is_empty() {
+        return Ok(Value::Nil);
+    }
+    for expr in &args[..args.len() - 1] {
+        eval(eval_env, expr.clone())?;
+    }
+    eval(eval_env, args[args.len() - 1].clone())
+}
+
+fn eval_let(eval_env: &mut EvalEnv, args: &[Value]) -> MalResult<Value> {
+    if args.len() != 2 {
+        return Err(format!("let* takes 2 args but was given {}", args.len()));
+    }
+    let mut new_env = eval_env.new_child();
+    let bindings = &args[0];
+    match bindings {
+        Value::List(list) | Value::Vector(list) => if list.len() % 2 != 0 {
+            return Err(format!(
+                "bindings list must have an even number of elements but has {}",
+                list.len()
+            ));
+        } else {
+            for chunk in list.chunks(2) {
+                let var = match &chunk[0] {
+                    v @ Value::Symbol(_) => v,
+                    var => return Err(format!("var {} in binding list must be a symbol", var)),
+                };
+                let val = eval(&mut new_env, chunk[1].clone())?;
+                new_env.set(Atom::from(var.clone()), val);
+            }
+        },
+        _ => return Err("bindings must be a list".to_owned()),
+    }
+    let expr = &args[1];
+    eval(&mut new_env, expr.clone())
+}
+
+fn eval_def(eval_env: &mut EvalEnv, args: &[Value]) -> MalResult<Value> {
+    if args.len() != 2 {
+        return Err(format!("def! takes 2 args but was given {}", args.len()));
+    }
+    let var = match args[0] {
+        Value::Symbol(_) => args[0].clone(),
+        ref v => return Err(format!("var {} in def! must be a symbol", v)),
+    };
+    let val = eval(eval_env, args[1].clone())?;
+    eval_env.set(Atom::from(var), val.clone());
+    Ok(val)
+}
+
+fn eval_if(eval_env: &mut EvalEnv, args: &[Value]) -> MalResult<Value> {
+    if args.len() < 2 {
+        return Err(format!(
+            "if must have either 2 or 3 args but was given {}",
+            args.len()
+        ));
+    }
+    let cond = &args[0];
+    let then_expr = &args[1];
+    let else_expr = if args.len() == 3 {
+        Some(&args[2])
+    } else {
+        None
+    };
+    match eval(eval_env, cond.clone())? {
+        Value::Nil | Value::False => match else_expr {
+            Some(else_expr) => eval(eval_env, else_expr.clone()),
+            _ => Ok(Value::Nil),
+        },
+        _ => eval(eval_env, then_expr.clone()),
+    }
+}
+
+fn eval_fn(args: &[Value]) -> MalResult<Value> {
+    if args.len() != 2 {
+        return Err(format!("fn* must have 2 args but was given {}", args.len()));
+    }
+    let params: Vec<Atom> = match args[0] {
+        Value::List(ref list) => list
             .iter()
-            .position(|p| p == &Atom::Symbol("&".to_owned()))
-        {
-            Some(pos) if pos != params.len() - 1 => {
-                if pos > args.len() {
-                    return Err(format!(
-                        "{} takes at least {} args but was given {}",
-                        func,
-                        pos,
-                        args.len()
-                    ));
-                }
-                let before_params = params[..pos].to_vec();
-                let variadic_param = &params[pos + 1];
-                let before_args = args[..pos].to_vec();
-                let mut variadic_args = vec![Value::Symbol("list".to_string())];
-                variadic_args.extend_from_slice(&args[pos..]);
-                let mut binds: Vec<(Atom, Value)> = before_params
-                    .into_iter()
-                    .zip(before_args.into_iter())
-                    .collect();
-                binds.push((variadic_param.clone(), Value::List(variadic_args)));
-                binds
-            }
-            _ => {
-                if args.len() < params.len() {
-                    return Err(format!(
-                        "{} takes {} args but was given {}",
-                        func,
-                        params.len(),
-                        args.len()
-                    ));
-                }
-                params.into_iter().zip(args.to_vec().into_iter()).collect()
-            }
-        };
-        let mut env = self.new_child_with_binds(binds.clone());
-        env.eval(Value::subst_binds(body.clone(), &binds))
-    }
+            .map(|l| match l {
+                Value::Symbol(_) => Ok(Atom::from(l.clone())),
+                _ => Err(format!("param {} is not a symbol", l)),
+            })
+            .collect::<MalResult<Vec<Atom>>>()?,
+        Value::Vector(ref vector) => vector
+            .iter()
+            .map(|v| match v {
+                Value::Symbol(_) => Ok(Atom::from(v.clone())),
+                _ => Err(format!("param {} is not a symbol", v)),
+            })
+            .collect::<MalResult<Vec<Atom>>>()?,
+        _ => {
+            return Err(format!(
+                "params list must be either a vector or list, got {}",
+                args[0]
+            ))
+        }
+    };
+    Ok(Value::Function {
+        params,
+        body: Box::new(args[1].clone()),
+    })
+}
 
-    fn apply_core_func(
-        &self,
-        func: fn(Vec<Value>) -> MalResult<Value>,
-        args: &[Value],
-    ) -> MalResult<Value> {
-        func(args.to_vec())
-    }
+fn apply_func(
+    eval_env: &mut EvalEnv,
+    func: &Value,
+    params: Vec<Atom>,
+    body: &Value,
+    args: &[Value],
+) -> MalResult<Value> {
+    // TODO: varargs
+    let binds: Vec<(Atom, Value)> = match params
+        .iter()
+        .position(|p| p == &Atom::Symbol("&".to_owned()))
+    {
+        Some(pos) if pos != params.len() - 1 => {
+            if pos > args.len() {
+                return Err(format!(
+                    "{} takes at least {} args but was given {}",
+                    func,
+                    pos,
+                    args.len()
+                ));
+            }
+            let before_params = params[..pos].to_vec();
+            let variadic_param = &params[pos + 1];
+            let before_args = args[..pos].to_vec();
+            let mut variadic_args = vec![Value::Symbol("list".to_string())];
+            variadic_args.extend_from_slice(&args[pos..]);
+            let mut binds: Vec<(Atom, Value)> = before_params
+                .into_iter()
+                .zip(before_args.into_iter())
+                .collect();
+            binds.push((variadic_param.clone(), Value::List(variadic_args)));
+            binds
+        }
+        _ => {
+            if args.len() < params.len() {
+                return Err(format!(
+                    "{} takes {} args but was given {}",
+                    func,
+                    params.len(),
+                    args.len()
+                ));
+            }
+            params.into_iter().zip(args.to_vec().into_iter()).collect()
+        }
+    };
+    let mut new_env = eval_env.new_child_with_binds(binds.clone());
+    eval(&mut new_env, Value::subst_binds(body.clone(), &binds))
+}
+
+fn apply_core_func(func: fn(Vec<Value>) -> MalResult<Value>, args: &[Value]) -> MalResult<Value> {
+    func(args.to_vec())
 }
 
 impl<'a> Default for EvalEnv<'a> {
