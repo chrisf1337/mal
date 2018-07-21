@@ -51,6 +51,10 @@ fn main() {
         println!("No previous history");
     }
     let mut eval_env = EvalEnv::default();
+    rep(
+        "(def! not (fn* (a) (if a false true)))".to_owned(),
+        &mut eval_env,
+    ).expect("failed to define not");
     loop {
         let readline = rl.readline("user> ");
         match readline {

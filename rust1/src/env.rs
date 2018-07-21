@@ -64,7 +64,7 @@ impl<'a> EvalEnv<'a> {
                         match func {
                             Value::CoreFunction { func, .. } => self.apply_core_func(*func, args),
                             Value::Function { params, body } => {
-                                self.apply_func(params.clone(), body, args)
+                                self.apply_func(func, params.clone(), body, args)
                             }
                             _ => Err(format!("{} is not a function and cannot be applied", func)),
                         }
@@ -216,9 +216,51 @@ impl<'a> EvalEnv<'a> {
         })
     }
 
-    fn apply_func(&mut self, params: Vec<Atom>, body: &Value, args: &[Value]) -> MalResult<Value> {
+    fn apply_func(
+        &mut self,
+        func: &Value,
+        params: Vec<Atom>,
+        body: &Value,
+        args: &[Value],
+    ) -> MalResult<Value> {
         // TODO: varargs
-        let binds: Vec<(Atom, Value)> = params.into_iter().zip(args.to_vec().into_iter()).collect();
+        let binds: Vec<(Atom, Value)> = match params
+            .iter()
+            .position(|p| p == &Atom::Symbol("&".to_owned()))
+        {
+            Some(pos) if pos != params.len() - 1 => {
+                if pos > args.len() {
+                    return Err(format!(
+                        "{} takes at least {} args but was given {}",
+                        func,
+                        pos,
+                        args.len()
+                    ));
+                }
+                let before_params = params[..pos].to_vec();
+                let variadic_param = &params[pos + 1];
+                let before_args = args[..pos].to_vec();
+                let mut variadic_args = vec![Value::Symbol("list".to_string())];
+                variadic_args.extend_from_slice(&args[pos..]);
+                let mut binds: Vec<(Atom, Value)> = before_params
+                    .into_iter()
+                    .zip(before_args.into_iter())
+                    .collect();
+                binds.push((variadic_param.clone(), Value::List(variadic_args)));
+                binds
+            }
+            _ => {
+                if args.len() < params.len() {
+                    return Err(format!(
+                        "{} takes {} args but was given {}",
+                        func,
+                        params.len(),
+                        args.len()
+                    ));
+                }
+                params.into_iter().zip(args.to_vec().into_iter()).collect()
+            }
+        };
         let mut env = self.new_child_with_binds(binds.clone());
         env.eval(Value::subst_binds(body.clone(), &binds))
     }
