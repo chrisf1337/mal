@@ -1,4 +1,3 @@
-use env::EvalEnv;
 use std::collections::HashMap;
 use std::fmt;
 use MalResult;

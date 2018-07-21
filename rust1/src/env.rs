@@ -1,46 +1,35 @@
 use ast::{Atom, Value};
-use std::cell::{Ref, RefCell, RefMut};
 use std::collections::HashMap;
-use std::rc::Rc;
 use MalResult;
 
 #[derive(Debug, Eq, PartialEq, Clone)]
-pub struct Env {
+pub struct EvalEnv<'a> {
     env: HashMap<Atom, Value>,
-    outer: Option<EvalEnv>,
+    outer: Option<&'a EvalEnv<'a>>,
 }
 
-#[derive(Debug, Eq, PartialEq, Clone)]
-pub struct EvalEnv(Rc<RefCell<Env>>);
-
-impl EvalEnv {
-    fn new(env: HashMap<Atom, Value>, outer: Option<EvalEnv>, binds: Vec<(Atom, Value)>) -> Self {
-        let mut eval_env = EvalEnv(Rc::new(RefCell::new(Env { env, outer })));
+impl<'a> EvalEnv<'a> {
+    fn new(
+        env: HashMap<Atom, Value>,
+        outer: Option<&'a EvalEnv>,
+        binds: Vec<(Atom, Value)>,
+    ) -> Self {
+        let mut eval_env = EvalEnv { env, outer };
         for (var, expr) in binds {
             eval_env.set(var, expr);
         }
         eval_env
     }
 
-    fn borrow(&self) -> Ref<Env> {
-        self.0.borrow()
-    }
-
-    fn borrow_mut(&self) -> RefMut<Env> {
-        self.0.borrow_mut()
-    }
-
     fn set(&mut self, var: Atom, value: Value) {
-        let mut env = self.borrow_mut();
-        env.env.insert(var, value);
+        self.env.insert(var, value);
     }
 
     fn find(&self, symbol: &Atom) -> Option<EvalEnv> {
-        let env = self.borrow();
-        if env.env.contains_key(symbol) {
+        if self.env.contains_key(symbol) {
             Some(self.clone())
         } else {
-            match env.outer {
+            match self.outer {
                 Some(ref outer) => outer.find(symbol),
                 None => None,
             }
@@ -49,10 +38,7 @@ impl EvalEnv {
 
     fn get(&self, symbol: &Atom) -> Option<Value> {
         match self.find(symbol) {
-            Some(env) => {
-                let env = env.borrow();
-                Some(env.env[symbol].clone())
-            }
+            Some(env) => Some(env.env[symbol].clone()),
             None => None,
         }
     }
@@ -117,11 +103,11 @@ impl EvalEnv {
     }
 
     fn new_child(&self) -> EvalEnv {
-        EvalEnv::new(HashMap::new(), Some(self.clone()), vec![])
+        EvalEnv::new(HashMap::new(), Some(self), vec![])
     }
 
     fn new_child_with_binds(&self, binds: Vec<(Atom, Value)>) -> EvalEnv {
-        EvalEnv::new(HashMap::new(), Some(self.clone()), binds)
+        EvalEnv::new(HashMap::new(), Some(self), binds)
     }
 
     fn eval_do(&mut self, args: &[Value]) -> MalResult<Value> {
@@ -246,7 +232,7 @@ impl EvalEnv {
     }
 }
 
-impl Default for EvalEnv {
+impl<'a> Default for EvalEnv<'a> {
     fn default() -> Self {
         let binds = vec![
             (
