@@ -329,17 +329,8 @@ impl Tokenizer {
   /// Called when tokenize() encounters a " char
   fn tokenize_str(&mut self) -> ReaderResult<Token> {
     let mut str_chars = vec![];
-    'outer: while self.pos < self.input.len() {
+    while self.pos < self.input.len() {
       match self.input[self.pos] {
-        ';' => {
-          while self.input[self.pos] != '\n' {
-            self.pos += 1;
-            if self.pos == self.input.len() {
-              break 'outer;
-            }
-          }
-          self.pos += 1;
-        }
         '"' => {
           self.pos += 1;
           return Ok(Token::Str(str_chars.into_iter().collect()));
