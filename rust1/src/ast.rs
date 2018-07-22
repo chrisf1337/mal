@@ -375,6 +375,6 @@ mod test {
 
   #[test]
   fn test_string_escaping() {
-    assert_eq!(Value::Str(r#"ab"c"#)).string(true.to_owned(), r#""ab\"c""#);
+    assert_eq!(Value::Str(r#"ab"c"#.to_owned()).string(true), r#""ab\"c""#);
   }
 }

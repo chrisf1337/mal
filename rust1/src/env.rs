@@ -577,258 +577,287 @@ mod tests {
 
   #[test]
   fn test_eval1() {
-    let mut eval_env = EvalEnv::default();
+    let eval_env = EvalEnv::default();
     assert_eq!(
-      eval_env.eval(Value::List(vec![
-        Value::Symbol("+").to_owned(),
-        Value::Int(1),
-        Value::Int(2),
-      ])),
+      eval(
+        eval_env,
+        Value::List(vec![
+          Value::Symbol("+".to_owned()),
+          Value::Int(1),
+          Value::Int(2),
+        ])
+      ),
       Ok(Value::Int(3))
     );
   }
 
   #[test]
   fn test_eval2() {
-    let mut eval_env = EvalEnv::default();
+    let eval_env = EvalEnv::default();
     assert_eq!(
-      eval_env.eval(Value::List(vec![
-        Value::Symbol("+").to_owned(),
-        Value::Int(1),
+      eval(
+        eval_env,
         Value::List(vec![
-          Value::Symbol("*").to_owned(),
-          Value::Int(2),
-          Value::Int(3),
-        ]),
-      ])),
+          Value::Symbol("+".to_owned()),
+          Value::Int(1),
+          Value::List(vec![
+            Value::Symbol("*".to_owned()),
+            Value::Int(2),
+            Value::Int(3),
+          ]),
+        ])
+      ),
       Ok(Value::Int(7))
     );
   }
 
   #[test]
   fn test_def() {
-    let mut eval_env = EvalEnv::default();
+    let eval_env = EvalEnv::default();
     assert!(
-      eval_env
-        .eval(Value::List(vec![
-          Value::Symbol("def!").to_owned(),
-          Value::Symbol("a").to_owned(),
+      eval(
+        eval_env.clone(),
+        Value::List(vec![
+          Value::Symbol("def!".to_owned()),
+          Value::Symbol("a".to_owned()),
           Value::Int(6),
-        ]))
-        .is_ok()
+        ]),
+      ).is_ok()
     );
     assert_eq!(
-      eval_env.eval(Value::Symbol("a")).to_owned(),
+      eval(eval_env.clone(), Value::Symbol("a".to_owned())),
       Ok(Value::Int(6))
     );
     assert!(
-      eval_env
-        .eval(Value::List(vec![
-          Value::Symbol("def!").to_owned(),
-          Value::Symbol("b").to_owned(),
+      eval(
+        eval_env.clone(),
+        Value::List(vec![
+          Value::Symbol("def!".to_owned()),
+          Value::Symbol("b".to_owned()),
           Value::List(vec![
-            Value::Symbol("+").to_owned(),
-            Value::Symbol("a").to_owned(),
+            Value::Symbol("+".to_owned()),
+            Value::Symbol("a".to_owned()),
             Value::Int(2),
           ]),
-        ]))
-        .is_ok()
+        ]),
+      ).is_ok()
     );
     assert_eq!(
-      eval_env.eval(Value::List(vec![
-        Value::Symbol("+").to_owned(),
-        Value::Symbol("a").to_owned(),
-        Value::Symbol("b").to_owned(),
-      ])),
+      eval(
+        eval_env.clone(),
+        Value::List(vec![
+          Value::Symbol("+".to_owned()),
+          Value::Symbol("a".to_owned()),
+          Value::Symbol("b".to_owned()),
+        ])
+      ),
       Ok(Value::Int(14))
     );
   }
 
   #[test]
   fn test_let() {
-    let mut eval_env = EvalEnv::default();
+    let eval_env = EvalEnv::default();
     assert_eq!(
-      eval_env.eval(Value::List(vec![
-        Value::Symbol("let*").to_owned(),
+      eval(
+        eval_env,
         Value::List(vec![
-          Value::Symbol("c").to_owned(),
-          Value::Int(2),
-          Value::Symbol("d").to_owned(),
+          Value::Symbol("let*".to_owned()),
           Value::List(vec![
-            Value::Symbol("+").to_owned(),
-            Value::Symbol("c").to_owned(),
+            Value::Symbol("c".to_owned()),
             Value::Int(2),
+            Value::Symbol("d".to_owned()),
+            Value::List(vec![
+              Value::Symbol("+".to_owned()),
+              Value::Symbol("c".to_owned()),
+              Value::Int(2),
+            ]),
           ]),
-        ]),
-        Value::List(vec![
-          Value::Symbol("+").to_owned(),
-          Value::Symbol("c").to_owned(),
-          Value::Symbol("d").to_owned(),
-        ]),
-      ])),
+          Value::List(vec![
+            Value::Symbol("+".to_owned()),
+            Value::Symbol("c".to_owned()),
+            Value::Symbol("d".to_owned()),
+          ]),
+        ])
+      ),
       Ok(Value::Int(6))
     );
   }
 
   #[test]
   fn test_def_fail() {
-    let mut eval_env = EvalEnv::default();
+    let eval_env = EvalEnv::default();
     assert!(
-      eval_env
-        .eval(Value::List(vec![
-          Value::Symbol("def!").to_owned(),
-          Value::Keyword("a").to_owned(),
+      eval(
+        eval_env,
+        Value::List(vec![
+          Value::Symbol("def!".to_owned()),
+          Value::Keyword("a".to_owned()),
           Value::Int(6),
-        ]))
-        .is_err()
+        ]),
+      ).is_err()
     );
   }
 
   #[test]
   fn test_let_fail() {
-    let mut eval_env = EvalEnv::default();
+    let eval_env = EvalEnv::default();
     assert!(
-      eval_env
-        .eval(Value::List(vec![
-          Value::Symbol("let*").to_owned(),
+      eval(
+        eval_env,
+        Value::List(vec![
+          Value::Symbol("let*".to_owned()),
           Value::List(vec![Value::Keyword("c".to_owned()), Value::Int(2)]),
           Value::List(vec![
-            Value::Symbol("+").to_owned(),
-            Value::Symbol("c").to_owned(),
+            Value::Symbol("+".to_owned()),
+            Value::Symbol("c".to_owned()),
             Value::Int(1),
           ]),
-        ]))
-        .is_err()
+        ]),
+      ).is_err()
     );
   }
 
   #[test]
   fn test_do1() {
-    let mut eval_env = EvalEnv::default();
+    let eval_env = EvalEnv::default();
     assert_eq!(
-      eval_env.eval(Value::List(vec![Value::Symbol("do".to_owned())])),
+      eval(eval_env, Value::List(vec![Value::Symbol("do".to_owned())])),
       Ok(Value::Nil)
     );
   }
 
   #[test]
   fn test_do2() {
-    let mut eval_env = EvalEnv::default();
+    let eval_env = EvalEnv::default();
     assert_eq!(
-      eval_env.eval(Value::List(vec![
-        Value::Symbol("do").to_owned(),
-        Value::Int(1),
-      ])),
+      eval(
+        eval_env,
+        Value::List(vec![Value::Symbol("do".to_owned()), Value::Int(1)])
+      ),
       Ok(Value::Int(1))
     );
   }
 
   #[test]
   fn test_if1() {
-    let mut eval_env = EvalEnv::default();
+    let eval_env = EvalEnv::default();
     assert_eq!(
-      eval_env.eval(Value::List(vec![
-        Value::Symbol("if").to_owned(),
+      eval(
+        eval_env,
         Value::List(vec![
-          Value::Symbol("if").to_owned(),
-          Value::Nil,
-          Value::False,
-          Value::True,
-        ]),
-        Value::Int(1),
-        Value::Int(2),
-      ])),
+          Value::Symbol("if".to_owned()),
+          Value::List(vec![
+            Value::Symbol("if".to_owned()),
+            Value::Nil,
+            Value::False,
+            Value::True,
+          ]),
+          Value::Int(1),
+          Value::Int(2),
+        ])
+      ),
       Ok(Value::Int(1))
     );
   }
 
   #[test]
   fn test_fn1() {
-    let mut eval_env = EvalEnv::default();
+    let eval_env = EvalEnv::default();
     assert_eq!(
-      eval_env.eval(Value::List(vec![
+      eval(
+        eval_env,
         Value::List(vec![
-          Value::Symbol("fn*").to_owned(),
-          Value::List(vec![Value::Symbol("a".to_owned())]),
-          Value::Symbol("a").to_owned(),
-        ]),
-        Value::Int(7),
-      ])),
+          Value::List(vec![
+            Value::Symbol("fn*".to_owned()),
+            Value::List(vec![Value::Symbol("a".to_owned())]),
+            Value::Symbol("a".to_owned()),
+          ]),
+          Value::Int(7),
+        ])
+      ),
       Ok(Value::Int(7))
     );
   }
 
   #[test]
   fn test_fn2() {
-    let mut eval_env = EvalEnv::default();
+    let eval_env = EvalEnv::default();
     assert_eq!(
-      eval_env.eval(Value::List(vec![
+      eval(
+        eval_env,
         Value::List(vec![
-          Value::Symbol("fn*".to_owned()),
           Value::List(vec![
-            Value::Symbol("a".to_owned()),
-            Value::Symbol("b".to_owned()),
+            Value::Symbol("fn*".to_owned()),
+            Value::List(vec![
+              Value::Symbol("a".to_owned()),
+              Value::Symbol("b".to_owned()),
+            ]),
+            Value::List(vec![
+              Value::Symbol("+".to_owned()),
+              Value::Symbol("a".to_owned()),
+              Value::Symbol("b".to_owned()),
+            ]),
           ]),
-          Value::List(vec![
-            Value::Symbol("+".to_owned()),
-            Value::Symbol("a".to_owned()),
-            Value::Symbol("b".to_owned()),
-          ]),
-        ]),
-        Value::Int(2),
-        Value::Int(3),
-      ])),
+          Value::Int(2),
+          Value::Int(3),
+        ])
+      ),
       Ok(Value::Int(5))
     );
   }
 
   #[test]
   fn test_fn_fail() {
-    let mut eval_env = EvalEnv::default();
+    let eval_env = EvalEnv::default();
     assert!(
-      eval_env
-        .eval(Value::List(vec![
+      eval(
+        eval_env,
+        Value::List(vec![
           Value::List(vec![
-            Value::Symbol("fn*").to_owned(),
+            Value::Symbol("fn*".to_owned()),
             Value::List(vec![
-              Value::Symbol("a").to_owned(),
-              Value::Symbol("b").to_owned(),
+              Value::Symbol("a".to_owned()),
+              Value::Symbol("b".to_owned()),
             ]),
             Value::List(vec![
-              Value::Symbol("+").to_owned(),
-              Value::Symbol("a").to_owned(),
-              Value::Symbol("b").to_owned(),
+              Value::Symbol("+".to_owned()),
+              Value::Symbol("a".to_owned()),
+              Value::Symbol("b".to_owned()),
             ]),
           ]),
           Value::Int(2),
-        ]))
-        .is_err()
+        ]),
+      ).is_err()
     );
   }
 
   #[test]
   fn test_nested_fn() {
-    let mut eval_env = EvalEnv::default();
+    let eval_env = EvalEnv::default();
     assert_eq!(
-      eval_env.eval(Value::List(vec![
+      eval(
+        eval_env,
         Value::List(vec![
           Value::List(vec![
-            Value::Symbol("fn*").to_owned(),
-            Value::List(vec![Value::Symbol("a".to_owned())]),
             Value::List(vec![
-              Value::Symbol("fn*").to_owned(),
-              Value::List(vec![Value::Symbol("b".to_owned())]),
+              Value::Symbol("fn*".to_owned()),
+              Value::List(vec![Value::Symbol("a".to_owned())]),
               Value::List(vec![
-                Value::Symbol("+".to_owned()),
-                Value::Symbol("a".to_owned()),
-                Value::Symbol("b".to_owned()),
+                Value::Symbol("fn*".to_owned()),
+                Value::List(vec![Value::Symbol("b".to_owned())]),
+                Value::List(vec![
+                  Value::Symbol("+".to_owned()),
+                  Value::Symbol("a".to_owned()),
+                  Value::Symbol("b".to_owned()),
+                ]),
               ]),
             ]),
+            Value::Int(5),
           ]),
-          Value::Int(5),
-        ]),
-        Value::Int(7),
-      ])),
+          Value::Int(7),
+        ])
+      ),
       Ok(Value::Int(12))
     )
   }

@@ -660,16 +660,16 @@ mod tests {
     assert_eq!(
       Reader::read_str("(def f (x y) ; (+ x y)) \n (+ x y))"),
       Ok(Ast::List(vec![
-        Ast::Symbol("def").to_owned(),
-        Ast::Symbol("f").to_owned(),
+        Ast::Symbol("def".to_owned()),
+        Ast::Symbol("f".to_owned()),
         Ast::List(vec![
-          Ast::Symbol("x").to_owned(),
-          Ast::Symbol("y").to_owned(),
+          Ast::Symbol("x".to_owned()),
+          Ast::Symbol("y".to_owned()),
         ]),
         Ast::List(vec![
-          Ast::Symbol("+").to_owned(),
-          Ast::Symbol("x").to_owned(),
-          Ast::Symbol("y").to_owned(),
+          Ast::Symbol("+".to_owned()),
+          Ast::Symbol("x".to_owned()),
+          Ast::Symbol("y".to_owned()),
         ]),
       ]))
     )
@@ -699,7 +699,7 @@ mod tests {
   fn test_reader_deref() {
     assert_eq!(
       Reader::read_str("@a"),
-      Ok(Ast::Deref(Box::new(Ast::Symbol("a")))).to_owned()
+      Ok(Ast::Deref(Box::new(Ast::Symbol("a".to_owned()))))
     );
   }
 
@@ -709,7 +709,7 @@ mod tests {
       Reader::read_str(r#"^{"a" 1} [1 2 3]"#),
       Ok(Ast::WithMeta(
         Box::new(Ast::Vector(vec![Ast::Int(1), Ast::Int(2), Ast::Int(3)])),
-        Box::new(Ast::Hashmap(vec![(Ast::Str("a").to_owned(), Ast::Int(1))]))
+        Box::new(Ast::Hashmap(vec![(Ast::Str("a".to_owned()), Ast::Int(1))]))
       ))
     );
   }
@@ -718,7 +718,7 @@ mod tests {
   fn test_reader_fail1() {
     assert_eq!(
       Reader::read_str("(1"),
-      Err("expected ')', got EOF").to_owned()
+      Err("expected ')', got EOF".to_owned())
     )
   }
 
@@ -726,7 +726,7 @@ mod tests {
   fn test_reader_fail2() {
     assert_eq!(
       Reader::read_str(r#"("st"#),
-      Err("EOF while processing string").to_owned()
+      Err("EOF while processing string".to_owned())
     )
   }
 
@@ -734,7 +734,7 @@ mod tests {
   fn test_reader_fail3() {
     assert_eq!(
       Reader::read_str(r#"("st\"#),
-      Err("EOF while processing escape char").to_owned()
+      Err("EOF while processing escape char".to_owned())
     )
   }
 
@@ -758,10 +758,10 @@ mod tests {
     assert_eq!(
       Reader::read_str(r#"(sym:kw1:kw2"str")"#),
       Ok(Ast::List(vec![
-        Ast::Symbol("sym").to_owned(),
-        Ast::Keyword("kw1").to_owned(),
-        Ast::Keyword("kw2").to_owned(),
-        Ast::Str("str").to_owned(),
+        Ast::Symbol("sym".to_owned()),
+        Ast::Keyword("kw1".to_owned()),
+        Ast::Keyword("kw2".to_owned()),
+        Ast::Str("str".to_owned()),
       ]))
     );
   }
