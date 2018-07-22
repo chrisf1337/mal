@@ -755,6 +755,42 @@ impl Default for EvalEnv {
           },
         },
       ),
+      (
+        Atom::Symbol("cons".to_owned()),
+        Value::CoreFunction {
+          name: "cons",
+          func: |_, args| {
+            if args.len() != 2 {
+              return error!("cons requires 2 args but was given {}", args.len());
+            }
+            let head = &args[0];
+            if let Value::List(ref list) = args[1] {
+              let mut new_list = list.clone();
+              new_list.insert(0, head.clone());
+              Ok(Value::List(new_list))
+            } else {
+              error!("cannot apply cons to non-list: {}", args[1])
+            }
+          },
+        },
+      ),
+      (
+        Atom::Symbol("concat".to_owned()),
+        Value::CoreFunction {
+          name: "concat",
+          func: |_, args| {
+            let mut new_list = vec![];
+            for list in args {
+              if let Value::List(ref l) = list {
+                new_list.extend_from_slice(l);
+              } else {
+                return error!("cannot apply concat to non-list: {}", list);
+              }
+            }
+            Ok(Value::List(new_list))
+          },
+        },
+      ),
       (Atom::Symbol("*ARGV*".to_owned()), Value::List(vec![])),
     ];
     EvalEnv::new(HashMap::new(), None, binds)
