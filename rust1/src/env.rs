@@ -33,7 +33,7 @@ impl EvalEnv {
     self.0.borrow_mut()
   }
 
-  fn set(&mut self, var: Atom, value: Value) {
+  pub fn set(&mut self, var: Atom, value: Value) {
     let mut env = self.borrow_mut();
     env.env.insert(var, value);
   }
@@ -60,6 +60,14 @@ impl EvalEnv {
     }
   }
 
+  fn root(&self) -> EvalEnv {
+    let eval_env = self.borrow();
+    match eval_env.outer {
+      Some(ref outer) => outer.root(),
+      None => self.clone(),
+    }
+  }
+
   fn new_child(&self) -> EvalEnv {
     EvalEnv::new(HashMap::new(), Some(self.clone()), vec![])
   }
@@ -77,73 +85,73 @@ pub fn eval(mut eval_env: EvalEnv, mut value: Value) -> MalResult<Value> {
       } else {
         {
           let args = &list[1..];
-          match list[0] {
-            Value::Symbol(ref sym) if sym == "def!" => {
-              return eval_def(eval_env.clone(), &list[1..])
-            }
-            Value::Symbol(ref sym) if sym == "let*" => {
-              if args.len() != 2 {
-                return error!("let* takes 2 args but was given {}", args.len());
+          if let Value::Symbol(ref sym) = list[0] {
+            match sym.as_ref() {
+              "def!" => return eval_def(eval_env.clone(), &list[1..]),
+              "let*" => {
+                if args.len() != 2 {
+                  return error!("let* takes 2 args but was given {}", args.len());
+                }
+                let mut new_env = eval_env.new_child();
+                let bindings = &args[0];
+                match bindings {
+                  Value::List(list) | Value::Vector(list) => if list.len() % 2 != 0 {
+                    return error!(
+                      "bindings list must have an even number of elements but has {}",
+                      list.len()
+                    );
+                  } else {
+                    for chunk in list.chunks(2) {
+                      let var = match &chunk[0] {
+                        v @ Value::Symbol(_) => v,
+                        var => return error!("var {} in binding list must be a symbol", var),
+                      };
+                      let val = eval(new_env.clone(), chunk[1].clone())?;
+                      new_env.set(Atom::from(var.clone()), val);
+                    }
+                  },
+                  _ => return error!("bindings must be a list"),
+                }
+                eval_env = new_env;
+                value = args[1].clone();
+                continue;
               }
-              let mut new_env = eval_env.new_child();
-              let bindings = &args[0];
-              match bindings {
-                Value::List(list) | Value::Vector(list) => if list.len() % 2 != 0 {
+              "do" => {
+                if args.is_empty() {
+                  return Ok(Value::Nil);
+                }
+                for expr in &args[..args.len() - 1] {
+                  eval(eval_env.clone(), expr.clone())?;
+                }
+                value = args[args.len() - 1].clone();
+                continue;
+              }
+              "if" => {
+                if args.len() < 2 {
                   return error!(
-                    "bindings list must have an even number of elements but has {}",
-                    list.len()
+                    "if must have either 2 or 3 args but was given {}",
+                    args.len()
                   );
+                }
+                let cond = &args[0];
+                let then_expr = &args[1];
+                let else_expr = if args.len() == 3 {
+                  Some(&args[2])
                 } else {
-                  for chunk in list.chunks(2) {
-                    let var = match &chunk[0] {
-                      v @ Value::Symbol(_) => v,
-                      var => return error!("var {} in binding list must be a symbol", var),
-                    };
-                    let val = eval(new_env.clone(), chunk[1].clone())?;
-                    new_env.set(Atom::from(var.clone()), val);
-                  }
-                },
-                _ => return error!("bindings must be a list"),
+                  None
+                };
+                match eval(eval_env.clone(), cond.clone())? {
+                  Value::Nil | Value::False => match else_expr {
+                    Some(else_expr) => value = else_expr.clone(),
+                    _ => return Ok(Value::Nil),
+                  },
+                  _ => value = then_expr.clone(),
+                }
+                continue;
               }
-              eval_env = new_env;
-              value = args[1].clone();
-              continue;
+              "fn*" => return eval_fn(eval_env.clone(), args),
+              _ => (),
             }
-            Value::Symbol(ref sym) if sym == "do" => {
-              if args.is_empty() {
-                return Ok(Value::Nil);
-              }
-              for expr in &args[..args.len() - 1] {
-                eval(eval_env.clone(), expr.clone())?;
-              }
-              value = args[args.len() - 1].clone();
-              continue;
-            }
-            Value::Symbol(ref sym) if sym == "if" => {
-              if args.len() < 2 {
-                return error!(
-                  "if must have either 2 or 3 args but was given {}",
-                  args.len()
-                );
-              }
-              let cond = &args[0];
-              let then_expr = &args[1];
-              let else_expr = if args.len() == 3 {
-                Some(&args[2])
-              } else {
-                None
-              };
-              match eval(eval_env.clone(), cond.clone())? {
-                Value::Nil | Value::False => match else_expr {
-                  Some(else_expr) => value = else_expr.clone(),
-                  _ => return Ok(Value::Nil),
-                },
-                _ => value = then_expr.clone(),
-              }
-              continue;
-            }
-            Value::Symbol(ref sym) if sym == "fn*" => return eval_fn(eval_env.clone(), &list[1..]),
-            _ => (),
           }
         }
         let values = eval_ast(eval_env.clone(), Value::List(list))?;
@@ -152,7 +160,7 @@ pub fn eval(mut eval_env: EvalEnv, mut value: Value) -> MalResult<Value> {
             let func = &values[0];
             let args = &values[1..];
             match func {
-              Value::CoreFunction { func, .. } => return apply_core_func(*func, args),
+              Value::CoreFunction { func, .. } => return func(eval_env.clone(), args.to_vec()),
               Value::Function { params, body, env } => {
                 let params = params.clone();
                 let binds: Vec<(Atom, Value)> = match params
@@ -280,8 +288,55 @@ fn eval_fn(eval_env: EvalEnv, args: &[Value]) -> MalResult<Value> {
   })
 }
 
-fn apply_core_func(func: fn(Vec<Value>) -> MalResult<Value>, args: &[Value]) -> MalResult<Value> {
-  func(args.to_vec())
+fn apply_fn(
+  func: &Value,
+  params: &[Atom],
+  body: &Value,
+  env: EvalEnv,
+  args: &[Value],
+) -> MalResult<Value> {
+  let params = params.clone();
+  let binds: Vec<(Atom, Value)> = match params
+    .iter()
+    .position(|p| p == &Atom::Symbol("&".to_owned()))
+  {
+    Some(pos) if pos != params.len() - 1 => {
+      if pos > args.len() {
+        return error!(
+          "{} takes at least {} args but was given {}",
+          func,
+          pos,
+          args.len()
+        );
+      }
+      let before_params = params[..pos].to_vec();
+      let variadic_param = &params[pos + 1];
+      let before_args = args[..pos].to_vec();
+      let mut variadic_args = args[pos..].to_vec();
+      let mut binds: Vec<(Atom, Value)> = before_params
+        .into_iter()
+        .zip(before_args.into_iter())
+        .collect();
+      binds.push((variadic_param.clone(), Value::List(variadic_args)));
+      binds
+    }
+    _ => {
+      if args.len() < params.len() {
+        return error!(
+          "{} takes {} args but was given {}",
+          func,
+          params.len(),
+          args.len()
+        );
+      }
+      params
+        .to_vec()
+        .into_iter()
+        .zip(args.to_vec().into_iter())
+        .collect()
+    }
+  };
+  eval(env.new_child_with_binds(binds.clone()), body.clone())
 }
 
 impl Default for EvalEnv {
@@ -291,7 +346,7 @@ impl Default for EvalEnv {
         Atom::Symbol("+".to_owned()),
         Value::CoreFunction {
           name: "+",
-          func: |args| {
+          func: |_, args| {
             let mut sum = 0;
             for arg in args {
               match arg {
@@ -307,7 +362,7 @@ impl Default for EvalEnv {
         Atom::Symbol("-".to_owned()),
         Value::CoreFunction {
           name: "-",
-          func: |args| {
+          func: |_, args| {
             if args.is_empty() {
               return Ok(Value::Int(0));
             }
@@ -329,7 +384,7 @@ impl Default for EvalEnv {
         Atom::Symbol("*".to_owned()),
         Value::CoreFunction {
           name: "*",
-          func: |args| {
+          func: |_, args| {
             let mut prod = 1;
             for arg in args {
               match arg {
@@ -345,7 +400,7 @@ impl Default for EvalEnv {
         Atom::Symbol("/".to_owned()),
         Value::CoreFunction {
           name: "/",
-          func: |args| {
+          func: |_, args| {
             if args.is_empty() {
               return Ok(Value::Int(1));
             }
@@ -367,14 +422,14 @@ impl Default for EvalEnv {
         Atom::Symbol("list".to_owned()),
         Value::CoreFunction {
           name: "list",
-          func: |args| Ok(Value::List(args)),
+          func: |_, args| Ok(Value::List(args)),
         },
       ),
       (
         Atom::Symbol("list?".to_owned()),
         Value::CoreFunction {
           name: "list?",
-          func: |args| {
+          func: |_, args| {
             if args.is_empty() {
               error!("cannot apply list? to 0 args")
             } else {
@@ -390,7 +445,7 @@ impl Default for EvalEnv {
         Atom::Symbol("empty?".to_owned()),
         Value::CoreFunction {
           name: "empty?",
-          func: |args| {
+          func: |_, args| {
             if args.is_empty() {
               error!("cannot apply empty? to 0 args")
             } else {
@@ -406,7 +461,7 @@ impl Default for EvalEnv {
         Atom::Symbol("count".to_owned()),
         Value::CoreFunction {
           name: "count",
-          func: |args| {
+          func: |_, args| {
             if args.is_empty() {
               error!("cannot call count with 0 args")
             } else {
@@ -425,7 +480,7 @@ impl Default for EvalEnv {
         Atom::Symbol("=".to_owned()),
         Value::CoreFunction {
           name: "=",
-          func: |args| {
+          func: |_, args| {
             if args.len() < 2 {
               return error!("cannot apply = to less than 2 args");
             }
@@ -437,7 +492,7 @@ impl Default for EvalEnv {
         Atom::Symbol(">".to_owned()),
         Value::CoreFunction {
           name: ">",
-          func: |args| {
+          func: |_, args| {
             if args.len() < 2 {
               return error!("cannot apply > to less than 2 args");
             }
@@ -452,7 +507,7 @@ impl Default for EvalEnv {
         Atom::Symbol("<".to_owned()),
         Value::CoreFunction {
           name: "<",
-          func: |args| {
+          func: |_, args| {
             if args.len() < 2 {
               return error!("cannot apply < to less than 2 args");
             }
@@ -467,7 +522,7 @@ impl Default for EvalEnv {
         Atom::Symbol(">=".to_owned()),
         Value::CoreFunction {
           name: ">=",
-          func: |args| {
+          func: |_, args| {
             if args.len() < 2 {
               return error!("cannot apply >= to less than 2 args");
             }
@@ -482,7 +537,7 @@ impl Default for EvalEnv {
         Atom::Symbol("<=".to_owned()),
         Value::CoreFunction {
           name: "<=",
-          func: |args| {
+          func: |_, args| {
             if args.len() < 2 {
               return error!("cannot apply <= to less than 2 args");
             }
@@ -497,7 +552,7 @@ impl Default for EvalEnv {
         Atom::Symbol("pr-str".to_owned()),
         Value::CoreFunction {
           name: "pr-str",
-          func: |args| {
+          func: |_, args| {
             Ok(Value::Str(
               args
                 .into_iter()
@@ -512,7 +567,7 @@ impl Default for EvalEnv {
         Atom::Symbol("str".to_owned()),
         Value::CoreFunction {
           name: "str",
-          func: |args| {
+          func: |_, args| {
             Ok(Value::Str(
               args
                 .into_iter()
@@ -527,7 +582,7 @@ impl Default for EvalEnv {
         Atom::Symbol("prn".to_owned()),
         Value::CoreFunction {
           name: "prn",
-          func: |args| {
+          func: |_, args| {
             println!(
               "{}",
               args
@@ -544,7 +599,7 @@ impl Default for EvalEnv {
         Atom::Symbol("println".to_owned()),
         Value::CoreFunction {
           name: "println",
-          func: |args| {
+          func: |_, args| {
             println!(
               "{}",
               args
@@ -561,7 +616,7 @@ impl Default for EvalEnv {
         Atom::Symbol("read-string".to_owned()),
         Value::CoreFunction {
           name: "read-string",
-          func: |args| {
+          func: |_, args| {
             if args.is_empty() {
               return error!("cannot apply read-string to less than 1 arg");
             }
@@ -572,29 +627,131 @@ impl Default for EvalEnv {
           },
         },
       ),
-      // (
-      //   Atom::Symbol("slurp".to_owned()),
-      //   Value::CoreFunction {
-      //     name: "slurp",
-      //     func: |args| {
-      //       if args.is_empty() {
-      //         return error!("cannot apply slurp to less than 1 arg");
-      //       }
-      //       match args[0] {
-      //         Value::Str(ref filename) => {
-      //           let mut f = File::open(filename)?;
-      //           let mut contents = String::new();
-      //           f.read_to_string(&mut contents)?;
-      //           Ok(Value::Str(contents))
-      //         }
-      //         _ => Err(MalError::new(format!(
-      //           "cannot apply slurp to non-string: {}",
-      //           args[0]
-      //         ))),
-      //       }
-      //     },
-      //   },
-      // ),
+      (
+        Atom::Symbol("slurp".to_owned()),
+        Value::CoreFunction {
+          name: "slurp",
+          func: |_, args| {
+            if args.is_empty() {
+              return error!("cannot apply slurp to less than 1 arg");
+            }
+            match args[0] {
+              Value::Str(ref filename) => {
+                let mut f = File::open(filename)?;
+                let mut contents = String::new();
+                f.read_to_string(&mut contents)?;
+                Ok(Value::Str(contents))
+              }
+              _ => error!("cannot apply slurp to non-string: {}", args[0]),
+            }
+          },
+        },
+      ),
+      (
+        Atom::Symbol("eval".to_owned()),
+        Value::CoreFunction {
+          name: "eval",
+          func: |eval_env, args| {
+            if args.is_empty() {
+              return error!("cannot apply eval to less than 1 arg");
+            }
+            eval(eval_env.root(), args[0].clone())
+          },
+        },
+      ),
+      (
+        Atom::Symbol("atom".to_owned()),
+        Value::CoreFunction {
+          name: "atom",
+          func: |_, args| {
+            if args.is_empty() {
+              return error!("cannot apply eval to less than 1 arg");
+            }
+            Ok(Value::Atom(Rc::new(RefCell::new(args[0].clone()))))
+          },
+        },
+      ),
+      (
+        Atom::Symbol("atom?".to_owned()),
+        Value::CoreFunction {
+          name: "atom?",
+          func: |_, args| {
+            if args.is_empty() {
+              return error!("cannot apply atom? to less than 1 arg");
+            }
+            Ok(match args[0] {
+              Value::Atom(_) => Value::True,
+              _ => Value::False,
+            })
+          },
+        },
+      ),
+      (
+        Atom::Symbol("deref".to_owned()),
+        Value::CoreFunction {
+          name: "deref",
+          func: |_, args| {
+            if args.is_empty() {
+              return error!("cannot apply deref to less than 1 arg");
+            }
+            match args[0] {
+              Value::Atom(ref value) => Ok(value.borrow().clone()),
+              _ => error!("cannot deref non-atom: {}", args[0]),
+            }
+          },
+        },
+      ),
+      (
+        Atom::Symbol("reset!".to_owned()),
+        Value::CoreFunction {
+          name: "reset!",
+          func: |_, args| {
+            if args.len() < 2 {
+              return error!("cannot apply reset! to less than 2 args");
+            }
+            match (&args[0], &args[1]) {
+              (Value::Atom(ref value), _) => {
+                value.replace(args[1].clone());
+                Ok(args[1].clone())
+              }
+              _ => error!("cannot reset! non-atom: {}", args[0]),
+            }
+          },
+        },
+      ),
+      (
+        Atom::Symbol("swap!".to_owned()),
+        Value::CoreFunction {
+          name: "swap!",
+          func: |eval_env, args| {
+            if args.len() < 2 {
+              return error!("cannot apply swap to less than 2 args");
+            }
+            let atom = &args[0];
+            let func = &args[1];
+            let args = &args[2..];
+            match (atom, func) {
+              (Value::Atom(ref value), Value::Function { params, body, env }) => {
+                let mut func_args = vec![value.borrow().clone()];
+                func_args.extend_from_slice(args);
+                let new_value = apply_fn(func, params, body, env.clone(), &func_args)?;
+                *(value.borrow_mut()) = new_value.clone();
+                Ok(new_value)
+              }
+              (Value::Atom(ref value), Value::CoreFunction { func, .. }) => {
+                let mut func_args = vec![value.borrow().clone()];
+                func_args.extend_from_slice(args);
+                let new_value = func(eval_env, func_args)?;
+                *(value.borrow_mut()) = new_value.clone();
+                Ok(new_value)
+              }
+              (Value::Atom(_), _) => error!("{} is not a function", args[1]),
+              (_, _) => error!("cannot swap! non-atom: {}", args[0]),
+            }
+          },
+        },
+      ),
+      (Atom::Symbol("*ARGV*".to_owned()), Value::List(vec![])),
     ];
     EvalEnv::new(HashMap::new(), None, binds)
   }

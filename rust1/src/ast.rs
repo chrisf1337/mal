@@ -1,6 +1,8 @@
 use env::EvalEnv;
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::fmt;
+use std::rc::Rc;
 use MalResult;
 
 #[derive(Debug, Eq, PartialEq, Clone)]
@@ -184,13 +186,14 @@ pub enum Value {
   Nil,
   CoreFunction {
     name: &'static str,
-    func: fn(Vec<Value>) -> MalResult<Value>,
+    func: fn(EvalEnv, Vec<Value>) -> MalResult<Value>,
   },
   Function {
     params: Vec<Atom>, // must be Symbols
     body: Box<Value>,
     env: EvalEnv,
   },
+  Atom(Rc<RefCell<Value>>),
 }
 
 impl Value {
@@ -242,6 +245,7 @@ impl Value {
           .join(" "),
         body
       ),
+      Value::Atom(value) => format!("(atom {})", value.borrow().clone()),
     }
   }
 
@@ -344,6 +348,9 @@ impl From<Ast> for Value {
       Ast::True => Value::True,
       Ast::False => Value::False,
       Ast::Nil => Value::Nil,
+      Ast::Deref(value) => {
+        Value::List(vec![Value::Symbol("deref".to_owned()), Value::from(*value)])
+      }
       _ => unimplemented!(),
     }
   }

@@ -8,6 +8,8 @@ macro_rules! error {
   };
 }
 
+extern crate rustyline;
+
 pub mod ast;
 pub mod env;
 pub mod reader;
@@ -28,6 +30,12 @@ impl From<std::io::Error> for MalError {
 impl From<String> for MalError {
   fn from(err: String) -> Self {
     MalError(err)
+  }
+}
+
+impl From<rustyline::error::ReadlineError> for MalError {
+  fn from(err: rustyline::error::ReadlineError) -> Self {
+    MalError(err.to_string())
   }
 }
 
