@@ -154,7 +154,7 @@ pub fn eval(mut eval_env: EvalEnv, mut value: Value) -> MalResult<Value> {
             }
           }
         }
-        let values = eval_ast(eval_env.clone(), Value::List(list))?;
+        let values = eval_ast(&eval_env, Value::List(list))?;
         match values {
           Value::List(values) => {
             let func = &values[0];
@@ -170,9 +170,10 @@ pub fn eval(mut eval_env: EvalEnv, mut value: Value) -> MalResult<Value> {
                   Some(pos) if pos != params.len() - 1 => {
                     if pos > args.len() {
                       return error!(
-                        "{} takes at least {} args but was given {}",
+                        "{} takes at least {} arg{} but was given {}",
                         func,
                         pos,
+                        if params.len() == 1 { "" } else { "s" },
                         args.len()
                       );
                     }
@@ -188,11 +189,12 @@ pub fn eval(mut eval_env: EvalEnv, mut value: Value) -> MalResult<Value> {
                     binds
                   }
                   _ => {
-                    if args.len() < params.len() {
+                    if args.len() != params.len() {
                       return error!(
-                        "{} takes {} args but was given {}",
+                        "{} takes {} arg{} but was given {}",
                         func,
                         params.len(),
+                        if params.len() == 1 { "" } else { "s" },
                         args.len()
                       );
                     }
@@ -209,12 +211,12 @@ pub fn eval(mut eval_env: EvalEnv, mut value: Value) -> MalResult<Value> {
           _ => unreachable!(),
         }
       },
-      value => return eval_ast(eval_env.clone(), value),
+      value => return eval_ast(&eval_env, value),
     }
   }
 }
 
-fn eval_ast(eval_env: EvalEnv, value: Value) -> MalResult<Value> {
+fn eval_ast(eval_env: &EvalEnv, value: Value) -> MalResult<Value> {
   match value {
     Value::Symbol(sym) => match eval_env.get(&Atom::Symbol(sym.clone())) {
       Some(val) => Ok(val.clone()),
@@ -292,10 +294,9 @@ fn apply_fn(
   func: &Value,
   params: &[Atom],
   body: &Value,
-  env: EvalEnv,
+  env: &EvalEnv,
   args: &[Value],
 ) -> MalResult<Value> {
-  let params = params.clone();
   let binds: Vec<(Atom, Value)> = match params
     .iter()
     .position(|p| p == &Atom::Symbol("&".to_owned()))
@@ -303,9 +304,10 @@ fn apply_fn(
     Some(pos) if pos != params.len() - 1 => {
       if pos > args.len() {
         return error!(
-          "{} takes at least {} args but was given {}",
+          "{} takes at least {} arg{} but was given {}",
           func,
           pos,
+          if params.len() == 1 { "" } else { "s" },
           args.len()
         );
       }
@@ -321,11 +323,12 @@ fn apply_fn(
       binds
     }
     _ => {
-      if args.len() < params.len() {
+      if args.len() != params.len() {
         return error!(
-          "{} takes {} args but was given {}",
+          "{} takes {} arg{} but was given {}",
           func,
           params.len(),
+          if params.len() == 1 { "" } else { "s" },
           args.len()
         );
       }
@@ -431,7 +434,7 @@ impl Default for EvalEnv {
           name: "list?",
           func: |_, args| {
             if args.is_empty() {
-              error!("cannot apply list? to 0 args")
+              error!("list? requires at least 1 arg but was given {}", args.len())
             } else {
               Ok(match args[0] {
                 Value::List(_) => Value::True,
@@ -447,7 +450,7 @@ impl Default for EvalEnv {
           name: "empty?",
           func: |_, args| {
             if args.is_empty() {
-              error!("cannot apply empty? to 0 args")
+              error!("empty requires at least 1 arg but was given {}", args.len())
             } else {
               Ok(match args[0] {
                 Value::List(ref list) | Value::Vector(ref list) => Value::from(list.is_empty()),
@@ -463,7 +466,7 @@ impl Default for EvalEnv {
           name: "count",
           func: |_, args| {
             if args.is_empty() {
-              error!("cannot call count with 0 args")
+              error!("count requires at least 1 arg but was given {}", args.len())
             } else {
               match args[0] {
                 Value::List(ref list) | Value::Vector(ref list) => {
@@ -482,9 +485,10 @@ impl Default for EvalEnv {
           name: "=",
           func: |_, args| {
             if args.len() < 2 {
-              return error!("cannot apply = to less than 2 args");
+              return error!("= requires at least 2 args but was given {}", args.len());
             }
-            Ok(Value::from(args[0].list_eq(&args[1])))
+            let first = &args[0];
+            Ok(Value::from(args[1..].iter().all(|x| first.list_eq(x))))
           },
         },
       ),
@@ -493,8 +497,8 @@ impl Default for EvalEnv {
         Value::CoreFunction {
           name: ">",
           func: |_, args| {
-            if args.len() < 2 {
-              return error!("cannot apply > to less than 2 args");
+            if args.len() != 2 {
+              return error!("> requires 2 args but was given {}", args.len());
             }
             match (&args[0], &args[1]) {
               (Value::Int(a), Value::Int(b)) => Ok(Value::from(a > b)),
@@ -508,8 +512,8 @@ impl Default for EvalEnv {
         Value::CoreFunction {
           name: "<",
           func: |_, args| {
-            if args.len() < 2 {
-              return error!("cannot apply < to less than 2 args");
+            if args.len() != 2 {
+              return error!("< requires 2 args but was given {}", args.len());
             }
             match (&args[0], &args[1]) {
               (Value::Int(a), Value::Int(b)) => Ok(Value::from(a < b)),
@@ -523,8 +527,8 @@ impl Default for EvalEnv {
         Value::CoreFunction {
           name: ">=",
           func: |_, args| {
-            if args.len() < 2 {
-              return error!("cannot apply >= to less than 2 args");
+            if args.len() != 2 {
+              return error!(">= requires 2 args but was given {}", args.len());
             }
             match (&args[0], &args[1]) {
               (Value::Int(a), Value::Int(b)) => Ok(Value::from(a >= b)),
@@ -538,8 +542,8 @@ impl Default for EvalEnv {
         Value::CoreFunction {
           name: "<=",
           func: |_, args| {
-            if args.len() < 2 {
-              return error!("cannot apply <= to less than 2 args");
+            if args.len() != 2 {
+              return error!("<= requires 2 args but was given {}", args.len());
             }
             match (&args[0], &args[1]) {
               (Value::Int(a), Value::Int(b)) => Ok(Value::from(a <= b)),
@@ -617,8 +621,8 @@ impl Default for EvalEnv {
         Value::CoreFunction {
           name: "read-string",
           func: |_, args| {
-            if args.is_empty() {
-              return error!("cannot apply read-string to less than 1 arg");
+            if args.len() != 1 {
+              return error!("read-string requires 1 arg but was given {}", args.len());
             }
             match args[0] {
               Value::Str(ref string) => Ok(Value::from(Reader::read_str(string)?)),
@@ -632,8 +636,8 @@ impl Default for EvalEnv {
         Value::CoreFunction {
           name: "slurp",
           func: |_, args| {
-            if args.is_empty() {
-              return error!("cannot apply slurp to less than 1 arg");
+            if args.len() != 1 {
+              return error!("slurp requires 1 arg but was given {}", args.len());
             }
             match args[0] {
               Value::Str(ref filename) => {
@@ -652,8 +656,8 @@ impl Default for EvalEnv {
         Value::CoreFunction {
           name: "eval",
           func: |eval_env, args| {
-            if args.is_empty() {
-              return error!("cannot apply eval to less than 1 arg");
+            if args.len() != 1 {
+              return error!("eval requires 1 arg but was given {}", args.len());
             }
             eval(eval_env.root(), args[0].clone())
           },
@@ -664,8 +668,8 @@ impl Default for EvalEnv {
         Value::CoreFunction {
           name: "atom",
           func: |_, args| {
-            if args.is_empty() {
-              return error!("cannot apply eval to less than 1 arg");
+            if args.len() != 1 {
+              return error!("atom requires 1 arg but was given {}", args.len());
             }
             Ok(Value::Atom(Rc::new(RefCell::new(args[0].clone()))))
           },
@@ -676,8 +680,8 @@ impl Default for EvalEnv {
         Value::CoreFunction {
           name: "atom?",
           func: |_, args| {
-            if args.is_empty() {
-              return error!("cannot apply atom? to less than 1 arg");
+            if args.len() != 1 {
+              return error!("atom? requires 1 arg but was given {}", args.len());
             }
             Ok(match args[0] {
               Value::Atom(_) => Value::True,
@@ -691,8 +695,8 @@ impl Default for EvalEnv {
         Value::CoreFunction {
           name: "deref",
           func: |_, args| {
-            if args.is_empty() {
-              return error!("cannot apply deref to less than 1 arg");
+            if args.len() != 1 {
+              return error!("deref requires 1 arg but was given {}", args.len());
             }
             match args[0] {
               Value::Atom(ref value) => Ok(value.borrow().clone()),
@@ -706,8 +710,8 @@ impl Default for EvalEnv {
         Value::CoreFunction {
           name: "reset!",
           func: |_, args| {
-            if args.len() < 2 {
-              return error!("cannot apply reset! to less than 2 args");
+            if args.len() != 2 {
+              return error!("reset! requires 2 args but was given {}", args.len());
             }
             match (&args[0], &args[1]) {
               (Value::Atom(ref value), _) => {
@@ -725,7 +729,7 @@ impl Default for EvalEnv {
           name: "swap!",
           func: |eval_env, args| {
             if args.len() < 2 {
-              return error!("cannot apply swap to less than 2 args");
+              return error!("swap requires at least 2 args but was given {}", args.len());
             }
             let atom = &args[0];
             let func = &args[1];
@@ -734,7 +738,7 @@ impl Default for EvalEnv {
               (Value::Atom(ref value), Value::Function { params, body, env }) => {
                 let mut func_args = vec![value.borrow().clone()];
                 func_args.extend_from_slice(args);
-                let new_value = apply_fn(func, params, body, env.clone(), &func_args)?;
+                let new_value = apply_fn(func, params, body, &env, &func_args)?;
                 *(value.borrow_mut()) = new_value.clone();
                 Ok(new_value)
               }
