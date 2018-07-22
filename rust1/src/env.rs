@@ -1,8 +1,11 @@
 use ast::{Atom, Value};
+use reader::Reader;
 use std::cell::{Ref, RefCell, RefMut};
 use std::collections::HashMap;
+use std::fs::File;
+use std::io::prelude::*;
 use std::rc::Rc;
-use MalResult;
+use {MalError, MalResult};
 
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub struct Env {
@@ -80,27 +83,27 @@ pub fn eval(mut eval_env: EvalEnv, mut value: Value) -> MalResult<Value> {
             }
             Value::Symbol(ref sym) if sym == "let*" => {
               if args.len() != 2 {
-                return Err(format!("let* takes 2 args but was given {}", args.len()));
+                return error!("let* takes 2 args but was given {}", args.len());
               }
               let mut new_env = eval_env.new_child();
               let bindings = &args[0];
               match bindings {
                 Value::List(list) | Value::Vector(list) => if list.len() % 2 != 0 {
-                  return Err(format!(
+                  return error!(
                     "bindings list must have an even number of elements but has {}",
                     list.len()
-                  ));
+                  );
                 } else {
                   for chunk in list.chunks(2) {
                     let var = match &chunk[0] {
                       v @ Value::Symbol(_) => v,
-                      var => return Err(format!("var {} in binding list must be a symbol", var)),
+                      var => return error!("var {} in binding list must be a symbol", var),
                     };
                     let val = eval(new_env.clone(), chunk[1].clone())?;
                     new_env.set(Atom::from(var.clone()), val);
                   }
                 },
-                _ => return Err("bindings must be a list".to_owned()),
+                _ => return error!("bindings must be a list"),
               }
               eval_env = new_env;
               value = args[1].clone();
@@ -118,10 +121,10 @@ pub fn eval(mut eval_env: EvalEnv, mut value: Value) -> MalResult<Value> {
             }
             Value::Symbol(ref sym) if sym == "if" => {
               if args.len() < 2 {
-                return Err(format!(
+                return error!(
                   "if must have either 2 or 3 args but was given {}",
                   args.len()
-                ));
+                );
               }
               let cond = &args[0];
               let then_expr = &args[1];
@@ -158,12 +161,12 @@ pub fn eval(mut eval_env: EvalEnv, mut value: Value) -> MalResult<Value> {
                 {
                   Some(pos) if pos != params.len() - 1 => {
                     if pos > args.len() {
-                      return Err(format!(
+                      return error!(
                         "{} takes at least {} args but was given {}",
                         func,
                         pos,
                         args.len()
-                      ));
+                      );
                     }
                     let before_params = params[..pos].to_vec();
                     let variadic_param = &params[pos + 1];
@@ -178,12 +181,12 @@ pub fn eval(mut eval_env: EvalEnv, mut value: Value) -> MalResult<Value> {
                   }
                   _ => {
                     if args.len() < params.len() {
-                      return Err(format!(
+                      return error!(
                         "{} takes {} args but was given {}",
                         func,
                         params.len(),
                         args.len()
-                      ));
+                      );
                     }
                     params.into_iter().zip(args.to_vec().into_iter()).collect()
                   }
@@ -192,7 +195,7 @@ pub fn eval(mut eval_env: EvalEnv, mut value: Value) -> MalResult<Value> {
                 value = *(body.clone());
                 continue;
               }
-              _ => return Err(format!("{} is not a function and cannot be applied", func)),
+              _ => return error!("{} is not a function and cannot be applied", func),
             }
           }
           _ => unreachable!(),
@@ -207,7 +210,7 @@ fn eval_ast(eval_env: EvalEnv, value: Value) -> MalResult<Value> {
   match value {
     Value::Symbol(sym) => match eval_env.get(&Atom::Symbol(sym.clone())) {
       Some(val) => Ok(val.clone()),
-      None => Err(format!("not in env: {}", sym)),
+      None => error!("not in env: {}", sym),
     },
     Value::List(list) => Ok(Value::List(
       list
@@ -233,11 +236,11 @@ fn eval_ast(eval_env: EvalEnv, value: Value) -> MalResult<Value> {
 
 fn eval_def(mut eval_env: EvalEnv, args: &[Value]) -> MalResult<Value> {
   if args.len() != 2 {
-    return Err(format!("def! takes 2 args but was given {}", args.len()));
+    return error!("def! takes 2 args but was given {}", args.len());
   }
   let var = match args[0] {
     Value::Symbol(_) => args[0].clone(),
-    ref v => return Err(format!("var {} in def! must be a symbol", v)),
+    ref v => return error!("var {} in def! must be a symbol", v),
   };
   let val = eval(eval_env.clone(), args[1].clone())?;
   eval_env.set(Atom::from(var), val.clone());
@@ -246,28 +249,28 @@ fn eval_def(mut eval_env: EvalEnv, args: &[Value]) -> MalResult<Value> {
 
 fn eval_fn(eval_env: EvalEnv, args: &[Value]) -> MalResult<Value> {
   if args.len() != 2 {
-    return Err(format!("fn* must have 2 args but was given {}", args.len()));
+    return error!("fn* must have 2 args but was given {}", args.len());
   }
   let params: Vec<Atom> = match args[0] {
     Value::List(ref list) => list
       .iter()
       .map(|l| match l {
         Value::Symbol(_) => Ok(Atom::from(l.clone())),
-        _ => Err(format!("param {} is not a symbol", l)),
+        _ => error!("param {} is not a symbol", l),
       })
       .collect::<MalResult<Vec<Atom>>>()?,
     Value::Vector(ref vector) => vector
       .iter()
       .map(|v| match v {
         Value::Symbol(_) => Ok(Atom::from(v.clone())),
-        _ => Err(format!("param {} is not a symbol", v)),
+        _ => error!("param {} is not a symbol", v),
       })
       .collect::<MalResult<Vec<Atom>>>()?,
     _ => {
-      return Err(format!(
+      return error!(
         "params list must be either a vector or list, got {}",
         args[0]
-      ))
+      );
     }
   };
   Ok(Value::Function {
@@ -293,7 +296,7 @@ impl Default for EvalEnv {
             for arg in args {
               match arg {
                 Value::Int(i) => sum += i,
-                _ => return Err(format!("cannot apply + to {}", arg)),
+                _ => return error!("cannot apply + to {}", arg),
               }
             }
             Ok(Value::Int(sum))
@@ -310,12 +313,12 @@ impl Default for EvalEnv {
             }
             let mut diff = match args[0] {
               Value::Int(i) => i,
-              _ => return Err(format!("cannot apply - to {}", args[0])),
+              _ => return error!("cannot apply - to {}", args[0]),
             };
             for arg in &args[1..] {
               match arg {
                 Value::Int(i) => diff -= i,
-                _ => return Err(format!("cannot apply - to {}", arg)),
+                _ => return error!("cannot apply - to {}", arg),
               }
             }
             Ok(Value::Int(diff))
@@ -331,7 +334,7 @@ impl Default for EvalEnv {
             for arg in args {
               match arg {
                 Value::Int(i) => prod *= i,
-                _ => return Err(format!("cannot apply + to {}", arg)),
+                _ => return error!("cannot apply + to {}", arg),
               }
             }
             Ok(Value::Int(prod))
@@ -348,12 +351,12 @@ impl Default for EvalEnv {
             }
             let mut quot = match args[0] {
               Value::Int(i) => i,
-              _ => return Err(format!("cannot apply / to {}", args[0])),
+              _ => return error!("cannot apply / to {}", args[0]),
             };
             for arg in &args[1..] {
               match arg {
                 Value::Int(i) => quot /= i,
-                _ => return Err(format!("cannot apply / to {}", arg)),
+                _ => return error!("cannot apply / to {}", arg),
               }
             }
             Ok(Value::Int(quot))
@@ -373,7 +376,7 @@ impl Default for EvalEnv {
           name: "list?",
           func: |args| {
             if args.is_empty() {
-              Err("cannot apply list? to 0 args".to_owned())
+              error!("cannot apply list? to 0 args")
             } else {
               Ok(match args[0] {
                 Value::List(_) => Value::True,
@@ -389,7 +392,7 @@ impl Default for EvalEnv {
           name: "empty?",
           func: |args| {
             if args.is_empty() {
-              Err("cannot apply empty? to 0 args".to_owned())
+              error!("cannot apply empty? to 0 args")
             } else {
               Ok(match args[0] {
                 Value::List(ref list) | Value::Vector(ref list) => Value::from(list.is_empty()),
@@ -405,14 +408,14 @@ impl Default for EvalEnv {
           name: "count",
           func: |args| {
             if args.is_empty() {
-              Err("cannot call count with 0 args".to_owned())
+              error!("cannot call count with 0 args")
             } else {
               match args[0] {
                 Value::List(ref list) | Value::Vector(ref list) => {
                   Ok(Value::Int(list.len() as isize))
                 }
                 Value::Nil => Ok(Value::Int(0)),
-                _ => Err("cannot apply count to non-list".to_owned()),
+                _ => error!("cannot apply count to non-list"),
               }
             }
           },
@@ -424,7 +427,7 @@ impl Default for EvalEnv {
           name: "=",
           func: |args| {
             if args.len() < 2 {
-              return Err("cannot apply = to less than 2 args".to_owned());
+              return error!("cannot apply = to less than 2 args");
             }
             Ok(Value::from(args[0].list_eq(&args[1])))
           },
@@ -436,14 +439,11 @@ impl Default for EvalEnv {
           name: ">",
           func: |args| {
             if args.len() < 2 {
-              return Err("cannot apply > to less than 2 args".to_owned());
+              return error!("cannot apply > to less than 2 args");
             }
             match (&args[0], &args[1]) {
               (Value::Int(a), Value::Int(b)) => Ok(Value::from(a > b)),
-              _ => Err(format!(
-                "cannot apply > to non-ints: {} {}",
-                args[0], args[1]
-              )),
+              _ => error!("cannot apply > to non-ints: {} {}", args[0], args[1]),
             }
           },
         },
@@ -454,14 +454,11 @@ impl Default for EvalEnv {
           name: "<",
           func: |args| {
             if args.len() < 2 {
-              return Err("cannot apply < to less than 2 args".to_owned());
+              return error!("cannot apply < to less than 2 args");
             }
             match (&args[0], &args[1]) {
               (Value::Int(a), Value::Int(b)) => Ok(Value::from(a < b)),
-              _ => Err(format!(
-                "cannot apply < to non-ints: {} {}",
-                args[0], args[1]
-              )),
+              _ => error!("cannot apply < to non-ints: {} {}", args[0], args[1]),
             }
           },
         },
@@ -472,14 +469,11 @@ impl Default for EvalEnv {
           name: ">=",
           func: |args| {
             if args.len() < 2 {
-              return Err("cannot apply >= to less than 2 args".to_owned());
+              return error!("cannot apply >= to less than 2 args");
             }
             match (&args[0], &args[1]) {
               (Value::Int(a), Value::Int(b)) => Ok(Value::from(a >= b)),
-              _ => Err(format!(
-                "cannot apply >= to non-ints: {} {}",
-                args[0], args[1]
-              )),
+              _ => error!("cannot apply >= to non-ints: {} {}", args[0], args[1]),
             }
           },
         },
@@ -490,14 +484,11 @@ impl Default for EvalEnv {
           name: "<=",
           func: |args| {
             if args.len() < 2 {
-              return Err("cannot apply <= to less than 2 args".to_owned());
+              return error!("cannot apply <= to less than 2 args");
             }
             match (&args[0], &args[1]) {
               (Value::Int(a), Value::Int(b)) => Ok(Value::from(a <= b)),
-              _ => Err(format!(
-                "cannot apply <= to non-ints: {} {}",
-                args[0], args[1]
-              )),
+              _ => error!("cannot apply <= to non-ints: {} {}", args[0], args[1]),
             }
           },
         },
@@ -566,6 +557,44 @@ impl Default for EvalEnv {
           },
         },
       ),
+      (
+        Atom::Symbol("read-string".to_owned()),
+        Value::CoreFunction {
+          name: "read-string",
+          func: |args| {
+            if args.is_empty() {
+              return error!("cannot apply read-string to less than 1 arg");
+            }
+            match args[0] {
+              Value::Str(ref string) => Ok(Value::from(Reader::read_str(string)?)),
+              _ => error!("cannot apply read-string to non-string: {}", args[0]),
+            }
+          },
+        },
+      ),
+      // (
+      //   Atom::Symbol("slurp".to_owned()),
+      //   Value::CoreFunction {
+      //     name: "slurp",
+      //     func: |args| {
+      //       if args.is_empty() {
+      //         return error!("cannot apply slurp to less than 1 arg");
+      //       }
+      //       match args[0] {
+      //         Value::Str(ref filename) => {
+      //           let mut f = File::open(filename)?;
+      //           let mut contents = String::new();
+      //           f.read_to_string(&mut contents)?;
+      //           Ok(Value::Str(contents))
+      //         }
+      //         _ => Err(MalError::new(format!(
+      //           "cannot apply slurp to non-string: {}",
+      //           args[0]
+      //         ))),
+      //       }
+      //     },
+      //   },
+      // ),
     ];
     EvalEnv::new(HashMap::new(), None, binds)
   }
