@@ -321,6 +321,7 @@ impl Value {
       (Value::List(list), Value::Vector(vec)) | (Value::Vector(vec), Value::List(list)) => {
         list.len() == vec.len() && vec.iter().zip(list.iter()).all(|(v, l)| v.list_eq(l))
       }
+      (Value::Hashmap(ref hm1), Value::Hashmap(ref hm2)) => hashmap_list_eq(hm1, hm2),
       _ => self == other,
     }
   }
@@ -331,6 +332,19 @@ impl Value {
       _ => false,
     }
   }
+}
+pub fn hashmap_list_eq(hm1: &HashMap<Atom, Value>, hm2: &HashMap<Atom, Value>) -> bool {
+  for (k, v) in hm1 {
+    if !hm2.contains_key(k) || !hm2[k].list_eq(v) {
+      return false;
+    }
+  }
+  for (k, v) in hm2 {
+    if !hm1.contains_key(k) || !hm1[k].list_eq(v) {
+      return false;
+    }
+  }
+  true
 }
 
 impl From<bool> for Value {

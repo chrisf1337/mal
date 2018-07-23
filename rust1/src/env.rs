@@ -335,13 +335,13 @@ fn eval_try(eval_env: &EvalEnv, args: &[Value], is_macro: bool) -> MalResult<Val
   }
 }
 
-fn apply_fn(
-  func: &Value,
-  params: &[Atom],
-  body: &Value,
-  env: &EvalEnv,
-  args: &[Value],
-) -> MalResult<Value> {
+fn apply_fn(func: &Value, args: &[Value]) -> MalResult<Value> {
+  let (params, body, env) = match func {
+    Value::Function {
+      params, body, env, ..
+    } => (params.clone(), body.clone(), env.clone()),
+    _ => unreachable!("called apply_fn on non-function: {}", func),
+  };
   let binds: Vec<(Atom, Value)> = match params
     .iter()
     .position(|p| p == &Atom::Symbol("&".to_owned()))
@@ -384,7 +384,7 @@ fn apply_fn(
         .collect()
     }
   };
-  eval(env.new_child_with_binds(binds.clone()), body.clone(), false)
+  eval(env.new_child_with_binds(binds.clone()), *body, false)
 }
 
 fn eval_quasiquote(ast: Value) -> MalResult<Value> {
@@ -464,7 +464,7 @@ fn macro_expand(env: &EvalEnv, mut ast: Value) -> MalResult<Value> {
             env: env.clone(),
             is_macro,
           };
-          ast = apply_fn(&func, &params, &body, &env, &list[1..])?;
+          ast = apply_fn(&func, &list[1..])?;
         }
         _ => unreachable!(),
       },
@@ -567,7 +567,7 @@ impl Default for EvalEnv {
           name: "list?",
           func: |_, args| {
             if args.is_empty() {
-              error!("list? requires at least 1 arg but was given {}", args.len())
+              error!("list? takes at least 1 arg but was given {}", args.len())
             } else {
               Ok(match args[0] {
                 Value::List(_) => Value::True,
@@ -583,7 +583,7 @@ impl Default for EvalEnv {
           name: "empty?",
           func: |_, args| {
             if args.is_empty() {
-              error!("empty requires at least 1 arg but was given {}", args.len())
+              error!("empty takes at least 1 arg but was given {}", args.len())
             } else {
               Ok(match args[0] {
                 Value::List(ref list) | Value::Vector(ref list) => Value::from(list.is_empty()),
@@ -599,7 +599,7 @@ impl Default for EvalEnv {
           name: "count",
           func: |_, args| {
             if args.is_empty() {
-              error!("count requires at least 1 arg but was given {}", args.len())
+              error!("count takes at least 1 arg but was given {}", args.len())
             } else {
               match args[0] {
                 Value::List(ref list) | Value::Vector(ref list) => {
@@ -618,7 +618,7 @@ impl Default for EvalEnv {
           name: "=",
           func: |_, args| {
             if args.len() < 2 {
-              return error!("= requires at least 2 args but was given {}", args.len());
+              return error!("= takes at least 2 args but was given {}", args.len());
             }
             let first = &args[0];
             Ok(Value::from(args[1..].iter().all(|x| first.list_eq(x))))
@@ -631,7 +631,7 @@ impl Default for EvalEnv {
           name: ">",
           func: |_, args| {
             if args.len() != 2 {
-              return error!("> requires 2 args but was given {}", args.len());
+              return error!("> takes 2 args but was given {}", args.len());
             }
             match (&args[0], &args[1]) {
               (Value::Int(a), Value::Int(b)) => Ok(Value::from(a > b)),
@@ -646,7 +646,7 @@ impl Default for EvalEnv {
           name: "<",
           func: |_, args| {
             if args.len() != 2 {
-              return error!("< requires 2 args but was given {}", args.len());
+              return error!("< takes 2 args but was given {}", args.len());
             }
             match (&args[0], &args[1]) {
               (Value::Int(a), Value::Int(b)) => Ok(Value::from(a < b)),
@@ -661,7 +661,7 @@ impl Default for EvalEnv {
           name: ">=",
           func: |_, args| {
             if args.len() != 2 {
-              return error!(">= requires 2 args but was given {}", args.len());
+              return error!(">= takes 2 args but was given {}", args.len());
             }
             match (&args[0], &args[1]) {
               (Value::Int(a), Value::Int(b)) => Ok(Value::from(a >= b)),
@@ -676,7 +676,7 @@ impl Default for EvalEnv {
           name: "<=",
           func: |_, args| {
             if args.len() != 2 {
-              return error!("<= requires 2 args but was given {}", args.len());
+              return error!("<= takes 2 args but was given {}", args.len());
             }
             match (&args[0], &args[1]) {
               (Value::Int(a), Value::Int(b)) => Ok(Value::from(a <= b)),
@@ -755,7 +755,7 @@ impl Default for EvalEnv {
           name: "read-string",
           func: |_, args| {
             if args.len() != 1 {
-              return error!("read-string requires 1 arg but was given {}", args.len());
+              return error!("read-string takes 1 arg but was given {}", args.len());
             }
             match args[0] {
               Value::Str(ref string) => Ok(Value::from(Reader::read_str(string)?)),
@@ -770,7 +770,7 @@ impl Default for EvalEnv {
           name: "slurp",
           func: |_, args| {
             if args.len() != 1 {
-              return error!("slurp requires 1 arg but was given {}", args.len());
+              return error!("slurp takes 1 arg but was given {}", args.len());
             }
             match args[0] {
               Value::Str(ref filename) => {
@@ -790,7 +790,7 @@ impl Default for EvalEnv {
           name: "eval",
           func: |eval_env, args| {
             if args.len() != 1 {
-              return error!("eval requires 1 arg but was given {}", args.len());
+              return error!("eval takes 1 arg but was given {}", args.len());
             }
             eval(eval_env.root(), args[0].clone(), false)
           },
@@ -802,7 +802,7 @@ impl Default for EvalEnv {
           name: "atom",
           func: |_, args| {
             if args.len() != 1 {
-              return error!("atom requires 1 arg but was given {}", args.len());
+              return error!("atom takes 1 arg but was given {}", args.len());
             }
             Ok(Value::Atom(Rc::new(RefCell::new(args[0].clone()))))
           },
@@ -814,7 +814,7 @@ impl Default for EvalEnv {
           name: "atom?",
           func: |_, args| {
             if args.len() != 1 {
-              return error!("atom? requires 1 arg but was given {}", args.len());
+              return error!("atom? takes 1 arg but was given {}", args.len());
             }
             Ok(match args[0] {
               Value::Atom(_) => Value::True,
@@ -829,7 +829,7 @@ impl Default for EvalEnv {
           name: "deref",
           func: |_, args| {
             if args.len() != 1 {
-              return error!("deref requires 1 arg but was given {}", args.len());
+              return error!("deref takes 1 arg but was given {}", args.len());
             }
             match args[0] {
               Value::Atom(ref value) => Ok(value.borrow().clone()),
@@ -844,7 +844,7 @@ impl Default for EvalEnv {
           name: "reset!",
           func: |_, args| {
             if args.len() != 2 {
-              return error!("reset! requires 2 args but was given {}", args.len());
+              return error!("reset! takes 2 args but was given {}", args.len());
             }
             match (&args[0], &args[1]) {
               (Value::Atom(ref value), _) => {
@@ -862,21 +862,16 @@ impl Default for EvalEnv {
           name: "swap!",
           func: |eval_env, args| {
             if args.len() < 2 {
-              return error!("swap requires at least 2 args but was given {}", args.len());
+              return error!("swap takes at least 2 args but was given {}", args.len());
             }
             let atom = &args[0];
             let func = &args[1];
             let args = &args[2..];
             match (atom, func) {
-              (
-                Value::Atom(ref value),
-                Value::Function {
-                  params, body, env, ..
-                },
-              ) => {
+              (Value::Atom(ref value), Value::Function { .. }) => {
                 let mut func_args = vec![value.borrow().clone()];
                 func_args.extend_from_slice(args);
-                let new_value = apply_fn(func, params, body, &env, &func_args)?;
+                let new_value = apply_fn(func, &func_args)?;
                 *(value.borrow_mut()) = new_value.clone();
                 Ok(new_value)
               }
@@ -899,7 +894,7 @@ impl Default for EvalEnv {
           name: "cons",
           func: |_, args| {
             if args.len() != 2 {
-              return error!("cons requires 2 args but was given {}", args.len());
+              return error!("cons takes 2 args but was given {}", args.len());
             }
             let head = &args[0];
             match args[1] {
@@ -935,7 +930,7 @@ impl Default for EvalEnv {
           name: "nth",
           func: |_, args| {
             if args.len() != 2 {
-              return error!("nth requires 2 args but was given {}", args.len());
+              return error!("nth takes 2 args but was given {}", args.len());
             }
             match (&args[0], &args[1]) {
               (Value::List(ref list), Value::Int(i)) | (Value::Vector(ref list), Value::Int(i)) => {
@@ -946,7 +941,7 @@ impl Default for EvalEnv {
                 }
               }
               _ => error!(
-                "nth requires a list and an int but was given {} and {}",
+                "nth takes a list and an int but was given {} and {}",
                 args[0], args[1]
               ),
             }
@@ -959,7 +954,7 @@ impl Default for EvalEnv {
           name: "first",
           func: |_, args| {
             if args.len() != 1 {
-              return error!("first requires 1 arg but was given {}", args.len());
+              return error!("first takes 1 arg but was given {}", args.len());
             }
             match args[0] {
               Value::List(ref list) | Value::Vector(ref list) => {
@@ -970,7 +965,7 @@ impl Default for EvalEnv {
                 }
               }
               Value::Nil => Ok(Value::Nil),
-              _ => error!("first requires a list or nil but was given {}", args[0]),
+              _ => error!("first takes a list or nil but was given {}", args[0]),
             }
           },
         },
@@ -981,7 +976,7 @@ impl Default for EvalEnv {
           name: "rest",
           func: |_, args| {
             if args.len() != 1 {
-              return error!("rest requires 1 arg but was given {}", args.len());
+              return error!("rest takes 1 arg but was given {}", args.len());
             }
             match args[0] {
               Value::List(ref list) | Value::Vector(ref list) => {
@@ -992,7 +987,7 @@ impl Default for EvalEnv {
                 }
               }
               Value::Nil => Ok(Value::List(vec![])),
-              _ => error!("rest requires a list or nil but was given {}", args[0]),
+              _ => error!("rest takes a list or nil but was given {}", args[0]),
             }
           },
         },
@@ -1003,9 +998,375 @@ impl Default for EvalEnv {
           name: "throw",
           func: |_, args| {
             if args.len() != 1 {
-              return error!("throw requires 1 arg but was given {}", args.len());
+              return error!("throw takes 1 arg but was given {}", args.len());
             }
             Err(MalError(args[0].clone()))
+          },
+        },
+      ),
+      (
+        Atom::Symbol("apply".to_owned()),
+        Value::CoreFunction {
+          name: "apply",
+          func: |eval_env, args| {
+            if args.len() < 2 {
+              return error!("apply takes at least 2 args but was given {}", args.len());
+            }
+            let mut args_list = args[1..args.len() - 1].to_vec();
+            args_list.extend_from_slice(match args[args.len() - 1] {
+              Value::List(ref list) | Value::Vector(ref list) => list,
+              _ => {
+                return error!(
+                  "apply takes an arguments list but was given {}",
+                  args[args.len() - 1]
+                )
+              }
+            });
+            match eval(eval_env.clone(), args[0].clone(), false)? {
+              f @ Value::Function { .. } => apply_fn(&f, &args_list),
+              Value::CoreFunction { func, .. } => func(eval_env, args_list),
+              _ => return error!("apply takes a function but was given {}", args[0]),
+            }
+          },
+        },
+      ),
+      (
+        Atom::Symbol("map".to_owned()),
+        Value::CoreFunction {
+          name: "map",
+          func: |eval_env, args| {
+            if args.len() != 2 {
+              return error!("map takes 2 args but was given {}", args.len());
+            }
+            Ok(Value::List(match (&args[0], &args[1]) {
+              (Value::CoreFunction { func, .. }, Value::List(ref list))
+              | (Value::CoreFunction { func, .. }, Value::Vector(ref list)) => list
+                .to_vec()
+                .into_iter()
+                .map(|l| func(eval_env.clone(), vec![l]))
+                .collect::<MalResult<Vec<Value>>>()?,
+              (func @ Value::Function { .. }, Value::List(ref list))
+              | (func @ Value::Function { .. }, Value::Vector(ref list)) => list
+                .to_vec()
+                .into_iter()
+                .map(|l| apply_fn(func, &[l]))
+                .collect::<MalResult<Vec<Value>>>()?,
+              (Value::CoreFunction { .. }, _) | (Value::Function { .. }, _) => {
+                return error!("map takes a list but was given {}", args[1])
+              }
+              (_, _) => return error!("map takes a function but was given {}", args[0]),
+            }))
+          },
+        },
+      ),
+      (
+        Atom::Symbol("nil?".to_owned()),
+        Value::CoreFunction {
+          name: "nil?",
+          func: |_, args| {
+            if args.len() != 1 {
+              return error!("nil? takes 1 arg but was given {}", args.len());
+            }
+            Ok(match args[0] {
+              Value::Nil => Value::True,
+              _ => Value::False,
+            })
+          },
+        },
+      ),
+      (
+        Atom::Symbol("true?".to_owned()),
+        Value::CoreFunction {
+          name: "true?",
+          func: |_, args| {
+            if args.len() != 1 {
+              return error!("true? takes 1 arg but was given {}", args.len());
+            }
+            Ok(match args[0] {
+              Value::True => Value::True,
+              _ => Value::False,
+            })
+          },
+        },
+      ),
+      (
+        Atom::Symbol("false?".to_owned()),
+        Value::CoreFunction {
+          name: "false?",
+          func: |_, args| {
+            if args.len() != 1 {
+              return error!("false? takes 1 arg but was given {}", args.len());
+            }
+            Ok(match args[0] {
+              Value::False => Value::True,
+              _ => Value::False,
+            })
+          },
+        },
+      ),
+      (
+        Atom::Symbol("symbol?".to_owned()),
+        Value::CoreFunction {
+          name: "symbol?",
+          func: |_, args| {
+            if args.len() != 1 {
+              return error!("symbol? takes 1 arg but was given {}", args.len());
+            }
+            Ok(match args[0] {
+              Value::Symbol(_) => Value::True,
+              _ => Value::False,
+            })
+          },
+        },
+      ),
+      (
+        Atom::Symbol("symbol".to_owned()),
+        Value::CoreFunction {
+          name: "symbol",
+          func: |_, args| {
+            if args.len() != 1 {
+              return error!("symbol takes 1 arg but was given {}", args.len());
+            }
+            match args[0] {
+              Value::Str(ref sym) => Ok(Value::Symbol(sym.clone())),
+              _ => error!("symbol takes a string but was given {}", args[0]),
+            }
+          },
+        },
+      ),
+      (
+        Atom::Symbol("keyword".to_owned()),
+        Value::CoreFunction {
+          name: "keyword",
+          func: |_, args| {
+            if args.len() != 1 {
+              return error!("keyword takes 1 arg but was given {}", args.len());
+            }
+            match args[0] {
+              Value::Str(ref sym) => Ok(Value::Keyword(sym.clone())),
+              Value::Keyword(_) => Ok(args[0].clone()),
+              _ => error!(
+                "keyword takes a string or keyword but was given {}",
+                args[0]
+              ),
+            }
+          },
+        },
+      ),
+      (
+        Atom::Symbol("keyword?".to_owned()),
+        Value::CoreFunction {
+          name: "keyword?",
+          func: |_, args| {
+            if args.len() != 1 {
+              return error!("keyword? takes 1 arg but was given {}", args.len());
+            }
+            Ok(match args[0] {
+              Value::Keyword(_) => Value::True,
+              _ => Value::False,
+            })
+          },
+        },
+      ),
+      (
+        Atom::Symbol("vector".to_owned()),
+        Value::CoreFunction {
+          name: "vector",
+          func: |_, args| Ok(Value::Vector(args)),
+        },
+      ),
+      (
+        Atom::Symbol("vector?".to_owned()),
+        Value::CoreFunction {
+          name: "vector?",
+          func: |_, args| {
+            if args.len() != 1 {
+              return error!("vector? takes 1 arg but was given {}", args.len());
+            }
+            Ok(match args[0] {
+              Value::Vector(_) => Value::True,
+              _ => Value::False,
+            })
+          },
+        },
+      ),
+      (
+        Atom::Symbol("hash-map".to_owned()),
+        Value::CoreFunction {
+          name: "hash-map",
+          func: |_, args| {
+            if args.len() % 2 != 0 {
+              return error!(
+                "hash-map takes an even number of args but was given {}",
+                args.len()
+              );
+            }
+            let mut hashmap = HashMap::new();
+            for chunk in args.chunks(2) {
+              if !chunk[0].is_atom() {
+                return error!("key {} is not an atom", chunk[0]);
+              }
+              hashmap.insert(Atom::from(chunk[0].clone()), chunk[1].clone());
+            }
+            Ok(Value::Hashmap(hashmap))
+          },
+        },
+      ),
+      (
+        Atom::Symbol("map?".to_owned()),
+        Value::CoreFunction {
+          name: "map?",
+          func: |_, args| {
+            if args.len() != 1 {
+              return error!("map? takes 1 arg but was given {}", args.len());
+            }
+            Ok(match args[0] {
+              Value::Hashmap(_) => Value::True,
+              _ => Value::False,
+            })
+          },
+        },
+      ),
+      (
+        Atom::Symbol("assoc".to_owned()),
+        Value::CoreFunction {
+          name: "assoc",
+          func: |_, args| {
+            if args.len() % 2 != 1 {
+              return error!(
+                "assoc takes an odd number of args but was given {}",
+                args.len()
+              );
+            }
+            let mut new_hashmap = match args[0] {
+              Value::Hashmap(ref hashmap) => hashmap.clone(),
+              _ => return error!("assoc takes a hashmap but was given {}", args[0]),
+            };
+            for chunk in (&args[1..]).chunks(2) {
+              if !chunk[0].is_atom() {
+                return error!("key {} is not an atom", chunk[0]);
+              }
+              new_hashmap.insert(Atom::from(chunk[0].clone()), chunk[1].clone());
+            }
+            Ok(Value::Hashmap(new_hashmap))
+          },
+        },
+      ),
+      (
+        Atom::Symbol("dissoc".to_owned()),
+        Value::CoreFunction {
+          name: "dissoc",
+          func: |_, args| {
+            if args.is_empty() {
+              return error!("dissoc takes at least 1 arg but was given {}", args.len());
+            }
+            let mut hashmap = match args[0] {
+              Value::Hashmap(ref hashmap) => hashmap.clone(),
+              _ => return error!("dissoc takes a hashmap but was given {}", args[0]),
+            };
+            for key in &args[1..] {
+              if !key.is_atom() {
+                return error!("key {} is not an atom", key);
+              }
+              hashmap.remove(&Atom::from(key.clone()));
+            }
+            Ok(Value::Hashmap(hashmap))
+          },
+        },
+      ),
+      (
+        Atom::Symbol("get".to_owned()),
+        Value::CoreFunction {
+          name: "get",
+          func: |_, args| {
+            if args.len() != 2 {
+              return error!("get takes 2 args but was given {}", args.len());
+            }
+            let hashmap = match args[0] {
+              Value::Hashmap(ref hashmap) => hashmap.clone(),
+              Value::Nil => return Ok(Value::Nil),
+              _ => return error!("get takes a hashmap but was given {}", args[0]),
+            };
+            if !args[1].is_atom() {
+              return error!("key {} is not an atom", args[1]);
+            }
+            Ok(match hashmap.get(&Atom::from(args[1].clone())) {
+              Some(val) => val.clone(),
+              None => Value::Nil,
+            })
+          },
+        },
+      ),
+      (
+        Atom::Symbol("contains?".to_owned()),
+        Value::CoreFunction {
+          name: "contains",
+          func: |_, args| {
+            if args.len() != 2 {
+              return error!("contains? takes 2 args but was given {}", args.len());
+            }
+            let hashmap = match args[0] {
+              Value::Hashmap(ref hashmap) => hashmap.clone(),
+              Value::Nil => return Ok(Value::Nil),
+              _ => return error!("contains? takes a hashmap but was given {}", args[0]),
+            };
+            if !args[1].is_atom() {
+              return error!("key {} is not an atom", args[1]);
+            }
+            Ok(Value::from(
+              hashmap.contains_key(&Atom::from(args[1].clone())),
+            ))
+          },
+        },
+      ),
+      (
+        Atom::Symbol("keys".to_owned()),
+        Value::CoreFunction {
+          name: "keys",
+          func: |_, args| {
+            if args.len() != 1 {
+              return error!("keys takes 1 arg but was given {}", args.len());
+            }
+            let hashmap = match args[0] {
+              Value::Hashmap(ref hashmap) => hashmap.clone(),
+              Value::Nil => return Ok(Value::Nil),
+              _ => return error!("keys takes a hashmap but was given {}", args[0]),
+            };
+            Ok(Value::List(
+              hashmap.keys().cloned().map(Value::from).collect(),
+            ))
+          },
+        },
+      ),
+      (
+        Atom::Symbol("vals".to_owned()),
+        Value::CoreFunction {
+          name: "vals",
+          func: |_, args| {
+            if args.len() != 1 {
+              return error!("vals takes 1 arg but was given {}", args.len());
+            }
+            let hashmap = match args[0] {
+              Value::Hashmap(ref hashmap) => hashmap.clone(),
+              Value::Nil => return Ok(Value::Nil),
+              _ => return error!("vals takes a hashmap but was given {}", args[0]),
+            };
+            Ok(Value::List(hashmap.values().cloned().collect()))
+          },
+        },
+      ),
+      (
+        Atom::Symbol("sequential?".to_owned()),
+        Value::CoreFunction {
+          name: "sequential?",
+          func: |_, args| {
+            if args.len() != 1 {
+              return error!("sequential? takes 1 arg but was given {}", args.len());
+            }
+            Ok(match args[0] {
+              Value::Vector(_) | Value::List(_) => Value::True,
+              _ => Value::False,
+            })
           },
         },
       ),
