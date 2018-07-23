@@ -903,6 +903,74 @@ impl Default for EvalEnv {
           },
         },
       ),
+      (
+        Atom::Symbol("nth".to_owned()),
+        Value::CoreFunction {
+          name: "nth",
+          func: |_, args| {
+            if args.len() != 2 {
+              return error!("nth requires 2 args but was given {}", args.len());
+            }
+            match (&args[0], &args[1]) {
+              (Value::List(ref list), Value::Int(i)) | (Value::Vector(ref list), Value::Int(i)) => {
+                if *i < 0 || *i as usize >= list.len() {
+                  error!("index {} is ouside the bounds of {}", i, args[0])
+                } else {
+                  Ok(list[*i as usize].clone())
+                }
+              }
+              _ => error!(
+                "nth requires a list and an int but was given {} and {}",
+                args[0], args[1]
+              ),
+            }
+          },
+        },
+      ),
+      (
+        Atom::Symbol("first".to_owned()),
+        Value::CoreFunction {
+          name: "first",
+          func: |_, args| {
+            if args.len() != 1 {
+              return error!("first requires 1 arg but was given {}", args.len());
+            }
+            match args[0] {
+              Value::List(ref list) | Value::Vector(ref list) => {
+                if list.is_empty() {
+                  Ok(Value::Nil)
+                } else {
+                  Ok(list[0].clone())
+                }
+              }
+              Value::Nil => Ok(Value::Nil),
+              _ => error!("first requires a list or nil but was given {}", args[0]),
+            }
+          },
+        },
+      ),
+      (
+        Atom::Symbol("rest".to_owned()),
+        Value::CoreFunction {
+          name: "rest",
+          func: |_, args| {
+            if args.len() != 1 {
+              return error!("rest requires 1 arg but was given {}", args.len());
+            }
+            match args[0] {
+              Value::List(ref list) | Value::Vector(ref list) => {
+                if list.is_empty() {
+                  Ok(Value::List(vec![]))
+                } else {
+                  Ok(Value::List(list[1..].to_vec()))
+                }
+              }
+              Value::Nil => Ok(Value::List(vec![])),
+              _ => error!("rest requires a list or nil but was given {}", args[0]),
+            }
+          },
+        },
+      ),
       (Atom::Symbol("*ARGV*".to_owned()), Value::List(vec![])),
     ];
     EvalEnv::new(HashMap::new(), None, binds)
