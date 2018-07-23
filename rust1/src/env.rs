@@ -163,6 +163,7 @@ pub fn eval(mut eval_env: EvalEnv, mut value: Value, is_macro: bool) -> MalResul
                     continue;
                   }
                   "macroexpand" => return macro_expand(&eval_env, args[0].clone()),
+                  "try*" => return eval_try(&eval_env, args, is_macro),
                   _ => (),
                 }
               }
@@ -238,7 +239,7 @@ fn eval_ast(eval_env: &EvalEnv, value: Value, is_macro: bool) -> MalResult<Value
   match value {
     Value::Symbol(sym) => match eval_env.get(&Atom::Symbol(sym.clone())) {
       Some(val) => Ok(val.clone()),
-      None => error!("not in env: {}", sym),
+      None => error!("'{}' not found", sym),
     },
     Value::List(list) => Ok(Value::List(
       list
@@ -277,7 +278,7 @@ fn eval_def(mut eval_env: EvalEnv, args: &[Value], is_macro: bool) -> MalResult<
 
 fn eval_fn(eval_env: EvalEnv, args: &[Value], is_macro: bool) -> MalResult<Value> {
   if args.len() != 2 {
-    return error!("fn* must have 2 args but was given {}", args.len());
+    return error!("fn* takes 2 args but was given {}", args.len());
   }
   let params: Vec<Atom> = match args[0] {
     Value::List(ref list) => list
@@ -307,6 +308,31 @@ fn eval_fn(eval_env: EvalEnv, args: &[Value], is_macro: bool) -> MalResult<Value
     env: eval_env,
     is_macro,
   })
+}
+
+fn eval_try(eval_env: &EvalEnv, args: &[Value], is_macro: bool) -> MalResult<Value> {
+  if args.len() != 2 {
+    return error!("try* takes 2 args but was given {}", args.len());
+  }
+  let (b, c) = match args[1] {
+    Value::List(ref list) => if list.len() != 3 {
+      return error!("catch* takes 2 args but was given {}", list.len() - 1);
+    } else {
+      match list[1] {
+        Value::Symbol(_) => (),
+        _ => return error!("catch* bind variable {} is not a symbol", list[1]),
+      }
+      (list[1].clone(), list[2].clone())
+    },
+    _ => return error!("try* is missing a catch* list"),
+  };
+  match eval(eval_env.clone(), args[0].clone(), is_macro) {
+    Ok(value) => Ok(value),
+    Err(err) => {
+      let child_env = eval_env.new_child_with_binds(vec![(Atom::from(b), err.0)]);
+      eval(child_env, c, is_macro)
+    }
+  }
 }
 
 fn apply_fn(
@@ -968,6 +994,18 @@ impl Default for EvalEnv {
               Value::Nil => Ok(Value::List(vec![])),
               _ => error!("rest requires a list or nil but was given {}", args[0]),
             }
+          },
+        },
+      ),
+      (
+        Atom::Symbol("throw".to_owned()),
+        Value::CoreFunction {
+          name: "throw",
+          func: |_, args| {
+            if args.len() != 1 {
+              return error!("throw requires 1 arg but was given {}", args.len());
+            }
+            Err(MalError(args[0].clone()))
           },
         },
       ),

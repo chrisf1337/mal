@@ -2,40 +2,42 @@
 #![allow(unknown_lints)]
 #![warn(clippy)]
 
+pub mod ast;
+use ast::Value;
+
 macro_rules! error {
   ($($arg : tt)*) => {
-    Err(MalError(format!($($arg)*)))
+    Err(MalError(Value::Str(format!($($arg)*))))
   };
 }
 
 extern crate rustyline;
 
-pub mod ast;
 pub mod env;
 pub mod reader;
 
 pub type MalResult<T> = Result<T, MalError>;
 
 #[derive(Debug, Eq, PartialEq)]
-pub struct MalError(String);
+pub struct MalError(ast::Value);
 
 use std::fmt;
 
 impl From<std::io::Error> for MalError {
   fn from(err: std::io::Error) -> Self {
-    MalError(err.to_string())
+    MalError(Value::Str(err.to_string()))
   }
 }
 
 impl From<String> for MalError {
   fn from(err: String) -> Self {
-    MalError(err)
+    MalError(Value::Str(err))
   }
 }
 
 impl From<rustyline::error::ReadlineError> for MalError {
   fn from(err: rustyline::error::ReadlineError) -> Self {
-    MalError(err.to_string())
+    MalError(Value::Str(err.to_string()))
   }
 }
 
