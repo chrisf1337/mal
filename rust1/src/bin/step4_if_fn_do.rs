@@ -18,7 +18,7 @@ pub fn read(input: String) -> ReaderResult<Ast> {
 
 pub fn eval(ast: Ast, env: EvalEnv) -> MalResult<Value> {
   let value = Value::from(ast);
-  env::eval(env, value)
+  env::eval(env, value, false)
 }
 
 pub fn print(ast: Value) -> String {

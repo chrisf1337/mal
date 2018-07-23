@@ -192,6 +192,7 @@ pub enum Value {
     params: Vec<Atom>, // must be Symbols
     body: Box<Value>,
     env: EvalEnv,
+    is_macro: bool,
   },
   Atom(Rc<RefCell<Value>>),
 }
@@ -293,10 +294,16 @@ impl Value {
         }
         Value::Hashmap(hashmap)
       }
-      Value::Function { params, body, env } => Value::Function {
+      Value::Function {
+        params,
+        body,
+        env,
+        is_macro,
+      } => Value::Function {
         params,
         body: Box::new(Value::subst(*body, from, to)),
         env,
+        is_macro,
       },
       _ => val,
     }

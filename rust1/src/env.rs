@@ -77,154 +77,164 @@ impl EvalEnv {
   }
 }
 
-pub fn eval(mut eval_env: EvalEnv, mut value: Value) -> MalResult<Value> {
+pub fn eval(mut eval_env: EvalEnv, mut value: Value, is_macro: bool) -> MalResult<Value> {
   loop {
-    match value {
+    match value.clone() {
       Value::List(list) => if list.is_empty() {
         return Ok(Value::List(list));
       } else {
-        {
-          let args = &list[1..];
-          if let Value::Symbol(ref sym) = list[0] {
-            match sym.as_ref() {
-              "def!" => return eval_def(eval_env.clone(), &list[1..]),
-              "let*" => {
-                if args.len() != 2 {
-                  return error!("let* takes 2 args but was given {}", args.len());
-                }
-                let mut new_env = eval_env.new_child();
-                let bindings = &args[0];
-                match bindings {
-                  Value::List(list) | Value::Vector(list) => if list.len() % 2 != 0 {
-                    return error!(
-                      "bindings list must have an even number of elements but has {}",
-                      list.len()
-                    );
-                  } else {
-                    for chunk in list.chunks(2) {
-                      let var = match &chunk[0] {
-                        v @ Value::Symbol(_) => v,
-                        var => return error!("var {} in binding list must be a symbol", var),
-                      };
-                      let val = eval(new_env.clone(), chunk[1].clone())?;
-                      new_env.set(Atom::from(var.clone()), val);
+        value = macro_expand(&eval_env, value)?;
+        match value {
+          Value::List(list) => {
+            {
+              let args = &list[1..];
+              if let Value::Symbol(ref sym) = list[0] {
+                match sym.as_ref() {
+                  "def!" => return eval_def(eval_env.clone(), &list[1..], false),
+                  "defmacro!" => return eval_def(eval_env.clone(), &list[1..], true),
+                  "let*" => {
+                    if args.len() != 2 {
+                      return error!("let* takes 2 args but was given {}", args.len());
                     }
-                  },
-                  _ => return error!("bindings must be a list"),
+                    let mut new_env = eval_env.new_child();
+                    let bindings = &args[0];
+                    match bindings {
+                      Value::List(list) | Value::Vector(list) => if list.len() % 2 != 0 {
+                        return error!(
+                          "bindings list must have an even number of elements but has {}",
+                          list.len()
+                        );
+                      } else {
+                        for chunk in list.chunks(2) {
+                          let var = match &chunk[0] {
+                            v @ Value::Symbol(_) => v,
+                            var => return error!("var {} in binding list must be a symbol", var),
+                          };
+                          let val = eval(new_env.clone(), chunk[1].clone(), is_macro)?;
+                          new_env.set(Atom::from(var.clone()), val);
+                        }
+                      },
+                      _ => return error!("bindings must be a list"),
+                    }
+                    eval_env = new_env;
+                    value = args[1].clone();
+                    continue;
+                  }
+                  "do" => {
+                    if args.is_empty() {
+                      return Ok(Value::Nil);
+                    }
+                    for expr in &args[..args.len() - 1] {
+                      eval(eval_env.clone(), expr.clone(), is_macro)?;
+                    }
+                    value = args[args.len() - 1].clone();
+                    continue;
+                  }
+                  "if" => {
+                    if !(args.len() == 2 || args.len() == 3) {
+                      return error!("if takes either 2 or 3 args but was given {}", args.len());
+                    }
+                    let cond = &args[0];
+                    let then_expr = &args[1];
+                    let else_expr = if args.len() == 3 {
+                      Some(&args[2])
+                    } else {
+                      None
+                    };
+                    match eval(eval_env.clone(), cond.clone(), is_macro)? {
+                      Value::Nil | Value::False => match else_expr {
+                        Some(else_expr) => value = else_expr.clone(),
+                        _ => return Ok(Value::Nil),
+                      },
+                      _ => value = then_expr.clone(),
+                    }
+                    continue;
+                  }
+                  "fn*" => return eval_fn(eval_env.clone(), args, is_macro),
+                  "quote" => {
+                    return if args.len() != 1 {
+                      error!("quote takes 1 arg but was given {}", args.len())
+                    } else {
+                      Ok(args[0].clone())
+                    }
+                  }
+                  "quasiquote" => {
+                    value = eval_quasiquote(args[0].clone())?;
+                    continue;
+                  }
+                  "macroexpand" => return macro_expand(&eval_env, args[0].clone()),
+                  _ => (),
                 }
-                eval_env = new_env;
-                value = args[1].clone();
-                continue;
               }
-              "do" => {
-                if args.is_empty() {
-                  return Ok(Value::Nil);
+            }
+            let values = eval_ast(&eval_env, Value::List(list), is_macro)?;
+            match values {
+              Value::List(values) => {
+                let func = &values[0];
+                let args = &values[1..];
+                match func {
+                  Value::CoreFunction { func, .. } => return func(eval_env.clone(), args.to_vec()),
+                  Value::Function {
+                    params, body, env, ..
+                  } => {
+                    let params = params.clone();
+                    let binds: Vec<(Atom, Value)> = match params
+                      .iter()
+                      .position(|p| p == &Atom::Symbol("&".to_owned()))
+                    {
+                      Some(pos) if pos != params.len() - 1 => {
+                        if pos > args.len() {
+                          return error!(
+                            "{} takes at least {} arg{} but was given {}",
+                            func,
+                            pos,
+                            if params.len() == 1 { "" } else { "s" },
+                            args.len()
+                          );
+                        }
+                        let before_params = params[..pos].to_vec();
+                        let variadic_param = &params[pos + 1];
+                        let before_args = args[..pos].to_vec();
+                        let mut variadic_args = args[pos..].to_vec();
+                        let mut binds: Vec<(Atom, Value)> = before_params
+                          .into_iter()
+                          .zip(before_args.into_iter())
+                          .collect();
+                        binds.push((variadic_param.clone(), Value::List(variadic_args)));
+                        binds
+                      }
+                      _ => {
+                        if args.len() != params.len() {
+                          return error!(
+                            "{} takes {} arg{} but was given {}",
+                            func,
+                            params.len(),
+                            if params.len() == 1 { "" } else { "s" },
+                            args.len()
+                          );
+                        }
+                        params.into_iter().zip(args.to_vec().into_iter()).collect()
+                      }
+                    };
+                    eval_env = env.new_child_with_binds(binds.clone());
+                    value = *(body.clone());
+                    continue;
+                  }
+                  _ => return error!("{} is not a function and cannot be applied", func),
                 }
-                for expr in &args[..args.len() - 1] {
-                  eval(eval_env.clone(), expr.clone())?;
-                }
-                value = args[args.len() - 1].clone();
-                continue;
               }
-              "if" => {
-                if !(args.len() == 2 || args.len() == 3) {
-                  return error!("if takes either 2 or 3 args but was given {}", args.len());
-                }
-                let cond = &args[0];
-                let then_expr = &args[1];
-                let else_expr = if args.len() == 3 {
-                  Some(&args[2])
-                } else {
-                  None
-                };
-                match eval(eval_env.clone(), cond.clone())? {
-                  Value::Nil | Value::False => match else_expr {
-                    Some(else_expr) => value = else_expr.clone(),
-                    _ => return Ok(Value::Nil),
-                  },
-                  _ => value = then_expr.clone(),
-                }
-                continue;
-              }
-              "fn*" => return eval_fn(eval_env.clone(), args),
-              "quote" => {
-                return if args.len() != 1 {
-                  error!("quote takes 1 arg but was given {}", args.len())
-                } else {
-                  Ok(args[0].clone())
-                }
-              }
-              "quasiquote" => {
-                value = eval_quasiquote(args[0].clone())?;
-                continue;
-              }
-              _ => (),
+              _ => unreachable!(),
             }
           }
-        }
-        let values = eval_ast(&eval_env, Value::List(list))?;
-        match values {
-          Value::List(values) => {
-            let func = &values[0];
-            let args = &values[1..];
-            match func {
-              Value::CoreFunction { func, .. } => return func(eval_env.clone(), args.to_vec()),
-              Value::Function { params, body, env } => {
-                let params = params.clone();
-                let binds: Vec<(Atom, Value)> = match params
-                  .iter()
-                  .position(|p| p == &Atom::Symbol("&".to_owned()))
-                {
-                  Some(pos) if pos != params.len() - 1 => {
-                    if pos > args.len() {
-                      return error!(
-                        "{} takes at least {} arg{} but was given {}",
-                        func,
-                        pos,
-                        if params.len() == 1 { "" } else { "s" },
-                        args.len()
-                      );
-                    }
-                    let before_params = params[..pos].to_vec();
-                    let variadic_param = &params[pos + 1];
-                    let before_args = args[..pos].to_vec();
-                    let mut variadic_args = args[pos..].to_vec();
-                    let mut binds: Vec<(Atom, Value)> = before_params
-                      .into_iter()
-                      .zip(before_args.into_iter())
-                      .collect();
-                    binds.push((variadic_param.clone(), Value::List(variadic_args)));
-                    binds
-                  }
-                  _ => {
-                    if args.len() != params.len() {
-                      return error!(
-                        "{} takes {} arg{} but was given {}",
-                        func,
-                        params.len(),
-                        if params.len() == 1 { "" } else { "s" },
-                        args.len()
-                      );
-                    }
-                    params.into_iter().zip(args.to_vec().into_iter()).collect()
-                  }
-                };
-                eval_env = env.new_child_with_binds(binds.clone());
-                value = *(body.clone());
-                continue;
-              }
-              _ => return error!("{} is not a function and cannot be applied", func),
-            }
-          }
-          _ => unreachable!(),
+          _ => return eval_ast(&eval_env, value, is_macro),
         }
       },
-      value => return eval_ast(&eval_env, value),
+      value => return eval_ast(&eval_env, value, is_macro),
     }
   }
 }
 
-fn eval_ast(eval_env: &EvalEnv, value: Value) -> MalResult<Value> {
+fn eval_ast(eval_env: &EvalEnv, value: Value, is_macro: bool) -> MalResult<Value> {
   match value {
     Value::Symbol(sym) => match eval_env.get(&Atom::Symbol(sym.clone())) {
       Some(val) => Ok(val.clone()),
@@ -233,18 +243,18 @@ fn eval_ast(eval_env: &EvalEnv, value: Value) -> MalResult<Value> {
     Value::List(list) => Ok(Value::List(
       list
         .into_iter()
-        .map(|l| eval(eval_env.clone(), l))
+        .map(|l| eval(eval_env.clone(), l, is_macro))
         .collect::<MalResult<Vec<Value>>>()?,
     )),
     Value::Vector(list) => Ok(Value::Vector(
       list
         .into_iter()
-        .map(|l| eval(eval_env.clone(), l))
+        .map(|l| eval(eval_env.clone(), l, is_macro))
         .collect::<MalResult<Vec<Value>>>()?,
     )),
     Value::Hashmap(mut hashmap) => {
       for v in hashmap.values_mut() {
-        *v = eval(eval_env.clone(), v.clone())?;
+        *v = eval(eval_env.clone(), v.clone(), is_macro)?;
       }
       Ok(Value::Hashmap(hashmap))
     }
@@ -252,7 +262,7 @@ fn eval_ast(eval_env: &EvalEnv, value: Value) -> MalResult<Value> {
   }
 }
 
-fn eval_def(mut eval_env: EvalEnv, args: &[Value]) -> MalResult<Value> {
+fn eval_def(mut eval_env: EvalEnv, args: &[Value], is_macro: bool) -> MalResult<Value> {
   if args.len() != 2 {
     return error!("def! takes 2 args but was given {}", args.len());
   }
@@ -260,12 +270,12 @@ fn eval_def(mut eval_env: EvalEnv, args: &[Value]) -> MalResult<Value> {
     Value::Symbol(_) => args[0].clone(),
     ref v => return error!("var {} in def! must be a symbol", v),
   };
-  let val = eval(eval_env.clone(), args[1].clone())?;
+  let val = eval(eval_env.clone(), args[1].clone(), is_macro)?;
   eval_env.set(Atom::from(var), val.clone());
   Ok(val)
 }
 
-fn eval_fn(eval_env: EvalEnv, args: &[Value]) -> MalResult<Value> {
+fn eval_fn(eval_env: EvalEnv, args: &[Value], is_macro: bool) -> MalResult<Value> {
   if args.len() != 2 {
     return error!("fn* must have 2 args but was given {}", args.len());
   }
@@ -295,6 +305,7 @@ fn eval_fn(eval_env: EvalEnv, args: &[Value]) -> MalResult<Value> {
     params,
     body: Box::new(args[1].clone()),
     env: eval_env,
+    is_macro,
   })
 }
 
@@ -347,7 +358,7 @@ fn apply_fn(
         .collect()
     }
   };
-  eval(env.new_child_with_binds(binds.clone()), body.clone())
+  eval(env.new_child_with_binds(binds.clone()), body.clone(), false)
 }
 
 fn eval_quasiquote(ast: Value) -> MalResult<Value> {
@@ -395,6 +406,47 @@ fn eval_quasiquote(ast: Value) -> MalResult<Value> {
       _ => unreachable!(),
     }
   }
+}
+
+fn is_macro_call(env: &EvalEnv, ast: &Value) -> bool {
+  match ast {
+    Value::List(list) => match list.get(0) {
+      Some(sym @ Value::Symbol(_)) => match env.get(&Atom::from(sym.clone())) {
+        Some(Value::Function { is_macro, .. }) => is_macro,
+        _ => false,
+      },
+      _ => false,
+    },
+    _ => false,
+  }
+}
+
+fn macro_expand(env: &EvalEnv, mut ast: Value) -> MalResult<Value> {
+  while is_macro_call(env, &ast) {
+    match ast {
+      Value::List(list) => match env.get(&Atom::from(list[0].clone())) {
+        Some(Value::Function {
+          params,
+          body,
+          env,
+          is_macro,
+        }) => {
+          // this super sucks
+          let func = Value::Function {
+            params: params.clone(),
+            body: body.clone(),
+            env: env.clone(),
+            is_macro,
+          };
+          ast = apply_fn(&func, &params, &body, &env, &list[1..])?;
+        }
+        _ => unreachable!(),
+      },
+
+      _ => unreachable!(),
+    }
+  }
+  Ok(ast)
 }
 
 impl Default for EvalEnv {
@@ -714,7 +766,7 @@ impl Default for EvalEnv {
             if args.len() != 1 {
               return error!("eval requires 1 arg but was given {}", args.len());
             }
-            eval(eval_env.root(), args[0].clone())
+            eval(eval_env.root(), args[0].clone(), false)
           },
         },
       ),
@@ -790,7 +842,12 @@ impl Default for EvalEnv {
             let func = &args[1];
             let args = &args[2..];
             match (atom, func) {
-              (Value::Atom(ref value), Value::Function { params, body, env }) => {
+              (
+                Value::Atom(ref value),
+                Value::Function {
+                  params, body, env, ..
+                },
+              ) => {
                 let mut func_args = vec![value.borrow().clone()];
                 func_args.extend_from_slice(args);
                 let new_value = apply_fn(func, params, body, &env, &func_args)?;
@@ -866,7 +923,8 @@ mod tests {
           Value::Symbol("+".to_owned()),
           Value::Int(1),
           Value::Int(2),
-        ])
+        ]),
+        false
       ),
       Ok(Value::Int(3))
     );
@@ -886,7 +944,8 @@ mod tests {
             Value::Int(2),
             Value::Int(3),
           ]),
-        ])
+        ]),
+        false
       ),
       Ok(Value::Int(7))
     );
@@ -903,10 +962,11 @@ mod tests {
           Value::Symbol("a".to_owned()),
           Value::Int(6),
         ]),
+        false,
       ).is_ok()
     );
     assert_eq!(
-      eval(eval_env.clone(), Value::Symbol("a".to_owned())),
+      eval(eval_env.clone(), Value::Symbol("a".to_owned()), false),
       Ok(Value::Int(6))
     );
     assert!(
@@ -921,6 +981,7 @@ mod tests {
             Value::Int(2),
           ]),
         ]),
+        false,
       ).is_ok()
     );
     assert_eq!(
@@ -930,7 +991,8 @@ mod tests {
           Value::Symbol("+".to_owned()),
           Value::Symbol("a".to_owned()),
           Value::Symbol("b".to_owned()),
-        ])
+        ]),
+        false
       ),
       Ok(Value::Int(14))
     );
@@ -959,7 +1021,8 @@ mod tests {
             Value::Symbol("c".to_owned()),
             Value::Symbol("d".to_owned()),
           ]),
-        ])
+        ]),
+        false
       ),
       Ok(Value::Int(6))
     );
@@ -976,6 +1039,7 @@ mod tests {
           Value::Keyword("a".to_owned()),
           Value::Int(6),
         ]),
+        false,
       ).is_err()
     );
   }
@@ -995,6 +1059,7 @@ mod tests {
             Value::Int(1),
           ]),
         ]),
+        false,
       ).is_err()
     );
   }
@@ -1003,7 +1068,11 @@ mod tests {
   fn test_do1() {
     let eval_env = EvalEnv::default();
     assert_eq!(
-      eval(eval_env, Value::List(vec![Value::Symbol("do".to_owned())])),
+      eval(
+        eval_env,
+        Value::List(vec![Value::Symbol("do".to_owned())]),
+        false
+      ),
       Ok(Value::Nil)
     );
   }
@@ -1014,7 +1083,8 @@ mod tests {
     assert_eq!(
       eval(
         eval_env,
-        Value::List(vec![Value::Symbol("do".to_owned()), Value::Int(1)])
+        Value::List(vec![Value::Symbol("do".to_owned()), Value::Int(1)]),
+        false
       ),
       Ok(Value::Int(1))
     );
@@ -1036,7 +1106,8 @@ mod tests {
           ]),
           Value::Int(1),
           Value::Int(2),
-        ])
+        ]),
+        false
       ),
       Ok(Value::Int(1))
     );
@@ -1055,7 +1126,8 @@ mod tests {
             Value::Symbol("a".to_owned()),
           ]),
           Value::Int(7),
-        ])
+        ]),
+        false
       ),
       Ok(Value::Int(7))
     );
@@ -1082,7 +1154,8 @@ mod tests {
           ]),
           Value::Int(2),
           Value::Int(3),
-        ])
+        ]),
+        false
       ),
       Ok(Value::Int(5))
     );
@@ -1109,6 +1182,7 @@ mod tests {
           ]),
           Value::Int(2),
         ]),
+        false,
       ).is_err()
     );
   }
@@ -1137,7 +1211,8 @@ mod tests {
             Value::Int(5),
           ]),
           Value::Int(7),
-        ])
+        ]),
+        false
       ),
       Ok(Value::Int(12))
     )
