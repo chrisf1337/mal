@@ -317,6 +317,13 @@ impl Value {
       _ => self == other,
     }
   }
+
+  pub fn is_pair(&self) -> bool {
+    match self {
+      Value::List(list) | Value::Vector(list) => !list.is_empty(),
+      _ => false,
+    }
+  }
 }
 
 impl From<bool> for Value {
@@ -351,6 +358,21 @@ impl From<Ast> for Value {
       Ast::Deref(value) => {
         Value::List(vec![Value::Symbol("deref".to_owned()), Value::from(*value)])
       }
+      Ast::Quote(value) => {
+        Value::List(vec![Value::Symbol("quote".to_owned()), Value::from(*value)])
+      }
+      Ast::Quasiquote(value) => Value::List(vec![
+        Value::Symbol("quasiquote".to_owned()),
+        Value::from(*value),
+      ]),
+      Ast::Unquote(value) => Value::List(vec![
+        Value::Symbol("unquote".to_owned()),
+        Value::from(*value),
+      ]),
+      Ast::SpliceUnquote(value) => Value::List(vec![
+        Value::Symbol("splice-unquote".to_owned()),
+        Value::from(*value),
+      ]),
       _ => unimplemented!(),
     }
   }

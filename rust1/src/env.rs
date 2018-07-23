@@ -127,11 +127,8 @@ pub fn eval(mut eval_env: EvalEnv, mut value: Value) -> MalResult<Value> {
                 continue;
               }
               "if" => {
-                if args.len() < 2 {
-                  return error!(
-                    "if must have either 2 or 3 args but was given {}",
-                    args.len()
-                  );
+                if !(args.len() == 2 || args.len() == 3) {
+                  return error!("if takes either 2 or 3 args but was given {}", args.len());
                 }
                 let cond = &args[0];
                 let then_expr = &args[1];
@@ -150,6 +147,17 @@ pub fn eval(mut eval_env: EvalEnv, mut value: Value) -> MalResult<Value> {
                 continue;
               }
               "fn*" => return eval_fn(eval_env.clone(), args),
+              "quote" => {
+                return if args.len() != 1 {
+                  error!("quote takes 1 arg but was given {}", args.len())
+                } else {
+                  Ok(args[0].clone())
+                }
+              }
+              "quasiquote" => {
+                value = eval_quasiquote(args[0].clone())?;
+                continue;
+              }
               _ => (),
             }
           }
@@ -340,6 +348,53 @@ fn apply_fn(
     }
   };
   eval(env.new_child_with_binds(binds.clone()), body.clone())
+}
+
+fn eval_quasiquote(ast: Value) -> MalResult<Value> {
+  if !ast.is_pair() {
+    Ok(Value::List(vec![Value::Symbol("quote".to_owned()), ast]))
+  } else {
+    match &ast {
+      Value::List(list) | Value::Vector(list) => {
+        match &list[0] {
+          Value::Symbol(ref sym) if sym == "unquote" => {
+            if list.len() != 2 {
+              return error!("unquote takes 1 arg but was given {}", list.len() - 1);
+            } else {
+              return Ok(list[1].clone());
+            }
+          }
+          ref head if head.is_pair() => match head {
+            Value::List(inner_list) | Value::Vector(inner_list) => match &inner_list[0] {
+              Value::Symbol(ref sym) if sym == "splice-unquote" => {
+                if inner_list.len() != 2 {
+                  return error!(
+                    "splice-unquote takes 1 arg but was given {}",
+                    inner_list.len() - 1
+                  );
+                } else {
+                  return Ok(Value::List(vec![
+                    Value::Symbol("concat".to_owned()),
+                    inner_list[1].clone(),
+                    eval_quasiquote(Value::List(list[1..].to_vec()))?,
+                  ]));
+                }
+              }
+              _ => (),
+            },
+            _ => (),
+          },
+          _ => (),
+        }
+        Ok(Value::List(vec![
+          Value::Symbol("cons".to_owned()),
+          eval_quasiquote(list[0].clone())?,
+          eval_quasiquote(Value::List(list[1..].to_vec()))?,
+        ]))
+      }
+      _ => unreachable!(),
+    }
+  }
 }
 
 impl Default for EvalEnv {
@@ -764,12 +819,13 @@ impl Default for EvalEnv {
               return error!("cons requires 2 args but was given {}", args.len());
             }
             let head = &args[0];
-            if let Value::List(ref list) = args[1] {
-              let mut new_list = list.clone();
-              new_list.insert(0, head.clone());
-              Ok(Value::List(new_list))
-            } else {
-              error!("cannot apply cons to non-list: {}", args[1])
+            match args[1] {
+              Value::List(ref list) | Value::Vector(ref list) => {
+                let mut new_list = list.clone();
+                new_list.insert(0, head.clone());
+                Ok(Value::List(new_list))
+              }
+              _ => error!("cannot apply cons to non-list: {}", args[1]),
             }
           },
         },
@@ -781,10 +837,9 @@ impl Default for EvalEnv {
           func: |_, args| {
             let mut new_list = vec![];
             for list in args {
-              if let Value::List(ref l) = list {
-                new_list.extend_from_slice(l);
-              } else {
-                return error!("cannot apply concat to non-list: {}", list);
+              match list {
+                Value::List(ref l) | Value::Vector(ref l) => new_list.extend_from_slice(l),
+                _ => return error!("cannot apply concat to non-list: {}", list),
               }
             }
             Ok(Value::List(new_list))
