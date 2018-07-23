@@ -71,8 +71,32 @@ fn main() -> MalResult<()> {
                 `(let* (or_FIXME ~(first xs))
                        (if or_FIXME or_FIXME (or ~@(rest xs))))))))"#.to_owned(),
   )?;
+  rep(
+    eval_env.clone(),
+    r#"(def! *gensym-counter* (atom 0))"#.to_owned(),
+  )?;
+  rep(
+    eval_env.clone(),
+    r#"(def! gensym (fn* [] (symbol (str "G__" (swap! *gensym-counter* (fn* [x] (+ 1 x)))))))"#.to_owned(),
+  )?;
+  rep(
+    eval_env.clone(),
+    r#"(defmacro! or
+        (fn* (& xs)
+             (if (empty? xs)
+                 nil
+                 (if (= 1 (count xs))
+                     (first xs)
+                     (let* (condvar (gensym))
+                       `(let* (~condvar ~(first xs))
+                         (if ~condvar ~condvar (or ~@(rest xs)))))))))"#.to_owned(),
+  )?;
 
   if args.is_empty() {
+    rep(
+      eval_env.clone(),
+      r#"(println (str "Mal [" *host-language* "]"))"#.to_owned(),
+    )?;
     let config = Config::builder()
       .history_ignore_space(true)
       .completion_type(CompletionType::List)

@@ -3,8 +3,10 @@ use reader::Reader;
 use std::cell::{Ref, RefCell, RefMut};
 use std::collections::HashMap;
 use std::fs::File;
+use std::io;
 use std::io::prelude::*;
 use std::rc::Rc;
+use std::time::SystemTime;
 use {MalError, MalResult};
 
 #[derive(Debug, Eq, PartialEq, Clone)]
@@ -80,12 +82,12 @@ impl EvalEnv {
 pub fn eval(mut eval_env: EvalEnv, mut value: Value, is_macro: bool) -> MalResult<Value> {
   loop {
     match value.clone() {
-      Value::List(list) => if list.is_empty() {
-        return Ok(Value::List(list));
+      Value::List(list, _) => if list.is_empty() {
+        return Ok(Value::new_list(list));
       } else {
         value = macro_expand(&eval_env, value)?;
         match value {
-          Value::List(list) => {
+          Value::List(list, _) => {
             {
               let args = &list[1..];
               if let Value::Symbol(ref sym) = list[0] {
@@ -99,7 +101,7 @@ pub fn eval(mut eval_env: EvalEnv, mut value: Value, is_macro: bool) -> MalResul
                     let mut new_env = eval_env.new_child();
                     let bindings = &args[0];
                     match bindings {
-                      Value::List(list) | Value::Vector(list) => if list.len() % 2 != 0 {
+                      Value::List(list, _) | Value::Vector(list, _) => if list.len() % 2 != 0 {
                         return error!(
                           "bindings list must have an even number of elements but has {}",
                           list.len()
@@ -168,9 +170,9 @@ pub fn eval(mut eval_env: EvalEnv, mut value: Value, is_macro: bool) -> MalResul
                 }
               }
             }
-            let values = eval_ast(&eval_env, Value::List(list), is_macro)?;
+            let values = eval_ast(&eval_env, Value::new_list(list), is_macro)?;
             match values {
-              Value::List(values) => {
+              Value::List(values, _) => {
                 let func = &values[0];
                 let args = &values[1..];
                 match func {
@@ -201,7 +203,7 @@ pub fn eval(mut eval_env: EvalEnv, mut value: Value, is_macro: bool) -> MalResul
                           .into_iter()
                           .zip(before_args.into_iter())
                           .collect();
-                        binds.push((variadic_param.clone(), Value::List(variadic_args)));
+                        binds.push((variadic_param.clone(), Value::new_list(variadic_args)));
                         binds
                       }
                       _ => {
@@ -241,23 +243,23 @@ fn eval_ast(eval_env: &EvalEnv, value: Value, is_macro: bool) -> MalResult<Value
       Some(val) => Ok(val.clone()),
       None => error!("'{}' not found", sym),
     },
-    Value::List(list) => Ok(Value::List(
+    Value::List(list, _) => Ok(Value::new_list(
       list
         .into_iter()
         .map(|l| eval(eval_env.clone(), l, is_macro))
         .collect::<MalResult<Vec<Value>>>()?,
     )),
-    Value::Vector(list) => Ok(Value::Vector(
+    Value::Vector(list, _) => Ok(Value::new_vector(
       list
         .into_iter()
         .map(|l| eval(eval_env.clone(), l, is_macro))
         .collect::<MalResult<Vec<Value>>>()?,
     )),
-    Value::Hashmap(mut hashmap) => {
+    Value::Hashmap(mut hashmap, _) => {
       for v in hashmap.values_mut() {
         *v = eval(eval_env.clone(), v.clone(), is_macro)?;
       }
-      Ok(Value::Hashmap(hashmap))
+      Ok(Value::Hashmap(hashmap, Box::new(Value::Nil)))
     }
     _ => Ok(value),
   }
@@ -281,14 +283,14 @@ fn eval_fn(eval_env: EvalEnv, args: &[Value], is_macro: bool) -> MalResult<Value
     return error!("fn* takes 2 args but was given {}", args.len());
   }
   let params: Vec<Atom> = match args[0] {
-    Value::List(ref list) => list
+    Value::List(ref list, _) => list
       .iter()
       .map(|l| match l {
         Value::Symbol(_) => Ok(Atom::from(l.clone())),
         _ => error!("param {} is not a symbol", l),
       })
       .collect::<MalResult<Vec<Atom>>>()?,
-    Value::Vector(ref vector) => vector
+    Value::Vector(ref vector, _) => vector
       .iter()
       .map(|v| match v {
         Value::Symbol(_) => Ok(Atom::from(v.clone())),
@@ -307,6 +309,7 @@ fn eval_fn(eval_env: EvalEnv, args: &[Value], is_macro: bool) -> MalResult<Value
     body: Box::new(args[1].clone()),
     env: eval_env,
     is_macro,
+    metadata: Box::new(Value::Nil),
   })
 }
 
@@ -315,7 +318,7 @@ fn eval_try(eval_env: &EvalEnv, args: &[Value], is_macro: bool) -> MalResult<Val
     return error!("try* takes 2 args but was given {}", args.len());
   }
   let (b, c) = match args[1] {
-    Value::List(ref list) => if list.len() != 3 {
+    Value::List(ref list, _) => if list.len() != 3 {
       return error!("catch* takes 2 args but was given {}", list.len() - 1);
     } else {
       match list[1] {
@@ -364,7 +367,7 @@ fn apply_fn(func: &Value, args: &[Value]) -> MalResult<Value> {
         .into_iter()
         .zip(before_args.into_iter())
         .collect();
-      binds.push((variadic_param.clone(), Value::List(variadic_args)));
+      binds.push((variadic_param.clone(), Value::new_list(variadic_args)));
       binds
     }
     _ => {
@@ -389,10 +392,13 @@ fn apply_fn(func: &Value, args: &[Value]) -> MalResult<Value> {
 
 fn eval_quasiquote(ast: Value) -> MalResult<Value> {
   if !ast.is_pair() {
-    Ok(Value::List(vec![Value::Symbol("quote".to_owned()), ast]))
+    Ok(Value::new_list(vec![
+      Value::Symbol("quote".to_owned()),
+      ast,
+    ]))
   } else {
     match &ast {
-      Value::List(list) | Value::Vector(list) => {
+      Value::List(list, _) | Value::Vector(list, _) => {
         match &list[0] {
           Value::Symbol(ref sym) if sym == "unquote" => {
             if list.len() != 2 {
@@ -402,7 +408,7 @@ fn eval_quasiquote(ast: Value) -> MalResult<Value> {
             }
           }
           ref head if head.is_pair() => match head {
-            Value::List(inner_list) | Value::Vector(inner_list) => match &inner_list[0] {
+            Value::List(inner_list, _) | Value::Vector(inner_list, _) => match &inner_list[0] {
               Value::Symbol(ref sym) if sym == "splice-unquote" => {
                 if inner_list.len() != 2 {
                   return error!(
@@ -410,10 +416,10 @@ fn eval_quasiquote(ast: Value) -> MalResult<Value> {
                     inner_list.len() - 1
                   );
                 } else {
-                  return Ok(Value::List(vec![
+                  return Ok(Value::new_list(vec![
                     Value::Symbol("concat".to_owned()),
                     inner_list[1].clone(),
-                    eval_quasiquote(Value::List(list[1..].to_vec()))?,
+                    eval_quasiquote(Value::new_list(list[1..].to_vec()))?,
                   ]));
                 }
               }
@@ -423,10 +429,10 @@ fn eval_quasiquote(ast: Value) -> MalResult<Value> {
           },
           _ => (),
         }
-        Ok(Value::List(vec![
+        Ok(Value::new_list(vec![
           Value::Symbol("cons".to_owned()),
           eval_quasiquote(list[0].clone())?,
-          eval_quasiquote(Value::List(list[1..].to_vec()))?,
+          eval_quasiquote(Value::new_list(list[1..].to_vec()))?,
         ]))
       }
       _ => unreachable!(),
@@ -436,7 +442,7 @@ fn eval_quasiquote(ast: Value) -> MalResult<Value> {
 
 fn is_macro_call(env: &EvalEnv, ast: &Value) -> bool {
   match ast {
-    Value::List(list) => match list.get(0) {
+    Value::List(list, _) => match list.get(0) {
       Some(sym @ Value::Symbol(_)) => match env.get(&Atom::from(sym.clone())) {
         Some(Value::Function { is_macro, .. }) => is_macro,
         _ => false,
@@ -450,20 +456,9 @@ fn is_macro_call(env: &EvalEnv, ast: &Value) -> bool {
 fn macro_expand(env: &EvalEnv, mut ast: Value) -> MalResult<Value> {
   while is_macro_call(env, &ast) {
     match ast {
-      Value::List(list) => match env.get(&Atom::from(list[0].clone())) {
-        Some(Value::Function {
-          params,
-          body,
-          env,
-          is_macro,
-        }) => {
+      Value::List(list, _) => match env.get(&Atom::from(list[0].clone())) {
+        Some(func @ Value::Function { .. }) => {
           // this super sucks
-          let func = Value::Function {
-            params: params.clone(),
-            body: body.clone(),
-            env: env.clone(),
-            is_macro,
-          };
           ast = apply_fn(&func, &list[1..])?;
         }
         _ => unreachable!(),
@@ -492,6 +487,7 @@ impl Default for EvalEnv {
             }
             Ok(Value::Int(sum))
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -514,6 +510,7 @@ impl Default for EvalEnv {
             }
             Ok(Value::Int(diff))
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -530,6 +527,7 @@ impl Default for EvalEnv {
             }
             Ok(Value::Int(prod))
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -552,13 +550,15 @@ impl Default for EvalEnv {
             }
             Ok(Value::Int(quot))
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
         Atom::Symbol("list".to_owned()),
         Value::CoreFunction {
           name: "list",
-          func: |_, args| Ok(Value::List(args)),
+          func: |_, args| Ok(Value::new_list(args)),
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -570,11 +570,12 @@ impl Default for EvalEnv {
               error!("list? takes at least 1 arg but was given {}", args.len())
             } else {
               Ok(match args[0] {
-                Value::List(_) => Value::True,
+                Value::List(_, _) => Value::True,
                 _ => Value::False,
               })
             }
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -586,11 +587,14 @@ impl Default for EvalEnv {
               error!("empty takes at least 1 arg but was given {}", args.len())
             } else {
               Ok(match args[0] {
-                Value::List(ref list) | Value::Vector(ref list) => Value::from(list.is_empty()),
+                Value::List(ref list, _) | Value::Vector(ref list, _) => {
+                  Value::from(list.is_empty())
+                }
                 _ => Value::False,
               })
             }
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -602,7 +606,7 @@ impl Default for EvalEnv {
               error!("count takes at least 1 arg but was given {}", args.len())
             } else {
               match args[0] {
-                Value::List(ref list) | Value::Vector(ref list) => {
+                Value::List(ref list, _) | Value::Vector(ref list, _) => {
                   Ok(Value::Int(list.len() as isize))
                 }
                 Value::Nil => Ok(Value::Int(0)),
@@ -610,6 +614,7 @@ impl Default for EvalEnv {
               }
             }
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -623,6 +628,7 @@ impl Default for EvalEnv {
             let first = &args[0];
             Ok(Value::from(args[1..].iter().all(|x| first.list_eq(x))))
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -638,6 +644,7 @@ impl Default for EvalEnv {
               _ => error!("cannot apply > to non-ints: {} {}", args[0], args[1]),
             }
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -653,6 +660,7 @@ impl Default for EvalEnv {
               _ => error!("cannot apply < to non-ints: {} {}", args[0], args[1]),
             }
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -668,6 +676,7 @@ impl Default for EvalEnv {
               _ => error!("cannot apply >= to non-ints: {} {}", args[0], args[1]),
             }
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -683,6 +692,7 @@ impl Default for EvalEnv {
               _ => error!("cannot apply <= to non-ints: {} {}", args[0], args[1]),
             }
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -698,6 +708,7 @@ impl Default for EvalEnv {
                 .join(" "),
             ))
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -713,6 +724,7 @@ impl Default for EvalEnv {
                 .join(""),
             ))
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -730,6 +742,7 @@ impl Default for EvalEnv {
             );
             Ok(Value::Nil)
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -747,6 +760,7 @@ impl Default for EvalEnv {
             );
             Ok(Value::Nil)
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -762,6 +776,7 @@ impl Default for EvalEnv {
               _ => error!("cannot apply read-string to non-string: {}", args[0]),
             }
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -782,6 +797,7 @@ impl Default for EvalEnv {
               _ => error!("cannot apply slurp to non-string: {}", args[0]),
             }
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -794,6 +810,7 @@ impl Default for EvalEnv {
             }
             eval(eval_env.root(), args[0].clone(), false)
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -806,6 +823,7 @@ impl Default for EvalEnv {
             }
             Ok(Value::Atom(Rc::new(RefCell::new(args[0].clone()))))
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -821,6 +839,7 @@ impl Default for EvalEnv {
               _ => Value::False,
             })
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -836,6 +855,7 @@ impl Default for EvalEnv {
               _ => error!("cannot deref non-atom: {}", args[0]),
             }
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -854,6 +874,7 @@ impl Default for EvalEnv {
               _ => error!("cannot reset! non-atom: {}", args[0]),
             }
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -886,6 +907,7 @@ impl Default for EvalEnv {
               (_, _) => error!("cannot swap! non-atom: {}", args[0]),
             }
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -898,14 +920,15 @@ impl Default for EvalEnv {
             }
             let head = &args[0];
             match args[1] {
-              Value::List(ref list) | Value::Vector(ref list) => {
+              Value::List(ref list, _) | Value::Vector(ref list, _) => {
                 let mut new_list = list.clone();
                 new_list.insert(0, head.clone());
-                Ok(Value::List(new_list))
+                Ok(Value::new_list(new_list))
               }
               _ => error!("cannot apply cons to non-list: {}", args[1]),
             }
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -916,12 +939,13 @@ impl Default for EvalEnv {
             let mut new_list = vec![];
             for list in args {
               match list {
-                Value::List(ref l) | Value::Vector(ref l) => new_list.extend_from_slice(l),
+                Value::List(ref l, _) | Value::Vector(ref l, _) => new_list.extend_from_slice(l),
                 _ => return error!("cannot apply concat to non-list: {}", list),
               }
             }
-            Ok(Value::List(new_list))
+            Ok(Value::new_list(new_list))
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -933,7 +957,8 @@ impl Default for EvalEnv {
               return error!("nth takes 2 args but was given {}", args.len());
             }
             match (&args[0], &args[1]) {
-              (Value::List(ref list), Value::Int(i)) | (Value::Vector(ref list), Value::Int(i)) => {
+              (Value::List(ref list, _), Value::Int(i))
+              | (Value::Vector(ref list, _), Value::Int(i)) => {
                 if *i < 0 || *i as usize >= list.len() {
                   error!("index {} is ouside the bounds of {}", i, args[0])
                 } else {
@@ -946,6 +971,7 @@ impl Default for EvalEnv {
               ),
             }
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -957,7 +983,7 @@ impl Default for EvalEnv {
               return error!("first takes 1 arg but was given {}", args.len());
             }
             match args[0] {
-              Value::List(ref list) | Value::Vector(ref list) => {
+              Value::List(ref list, _) | Value::Vector(ref list, _) => {
                 if list.is_empty() {
                   Ok(Value::Nil)
                 } else {
@@ -968,6 +994,7 @@ impl Default for EvalEnv {
               _ => error!("first takes a list or nil but was given {}", args[0]),
             }
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -979,17 +1006,18 @@ impl Default for EvalEnv {
               return error!("rest takes 1 arg but was given {}", args.len());
             }
             match args[0] {
-              Value::List(ref list) | Value::Vector(ref list) => {
+              Value::List(ref list, _) | Value::Vector(ref list, _) => {
                 if list.is_empty() {
-                  Ok(Value::List(vec![]))
+                  Ok(Value::new_list(vec![]))
                 } else {
-                  Ok(Value::List(list[1..].to_vec()))
+                  Ok(Value::new_list(list[1..].to_vec()))
                 }
               }
-              Value::Nil => Ok(Value::List(vec![])),
+              Value::Nil => Ok(Value::new_list(vec![])),
               _ => error!("rest takes a list or nil but was given {}", args[0]),
             }
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -1002,6 +1030,7 @@ impl Default for EvalEnv {
             }
             Err(MalError(args[0].clone()))
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -1014,7 +1043,7 @@ impl Default for EvalEnv {
             }
             let mut args_list = args[1..args.len() - 1].to_vec();
             args_list.extend_from_slice(match args[args.len() - 1] {
-              Value::List(ref list) | Value::Vector(ref list) => list,
+              Value::List(ref list, _) | Value::Vector(ref list, _) => list,
               _ => {
                 return error!(
                   "apply takes an arguments list but was given {}",
@@ -1028,6 +1057,7 @@ impl Default for EvalEnv {
               _ => return error!("apply takes a function but was given {}", args[0]),
             }
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -1038,15 +1068,15 @@ impl Default for EvalEnv {
             if args.len() != 2 {
               return error!("map takes 2 args but was given {}", args.len());
             }
-            Ok(Value::List(match (&args[0], &args[1]) {
-              (Value::CoreFunction { func, .. }, Value::List(ref list))
-              | (Value::CoreFunction { func, .. }, Value::Vector(ref list)) => list
+            Ok(Value::new_list(match (&args[0], &args[1]) {
+              (Value::CoreFunction { func, .. }, Value::List(ref list, _))
+              | (Value::CoreFunction { func, .. }, Value::Vector(ref list, _)) => list
                 .to_vec()
                 .into_iter()
                 .map(|l| func(eval_env.clone(), vec![l]))
                 .collect::<MalResult<Vec<Value>>>()?,
-              (func @ Value::Function { .. }, Value::List(ref list))
-              | (func @ Value::Function { .. }, Value::Vector(ref list)) => list
+              (func @ Value::Function { .. }, Value::List(ref list, _))
+              | (func @ Value::Function { .. }, Value::Vector(ref list, _)) => list
                 .to_vec()
                 .into_iter()
                 .map(|l| apply_fn(func, &[l]))
@@ -1057,6 +1087,7 @@ impl Default for EvalEnv {
               (_, _) => return error!("map takes a function but was given {}", args[0]),
             }))
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -1072,6 +1103,7 @@ impl Default for EvalEnv {
               _ => Value::False,
             })
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -1087,6 +1119,7 @@ impl Default for EvalEnv {
               _ => Value::False,
             })
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -1102,6 +1135,7 @@ impl Default for EvalEnv {
               _ => Value::False,
             })
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -1117,6 +1151,7 @@ impl Default for EvalEnv {
               _ => Value::False,
             })
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -1132,6 +1167,7 @@ impl Default for EvalEnv {
               _ => error!("symbol takes a string but was given {}", args[0]),
             }
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -1151,6 +1187,7 @@ impl Default for EvalEnv {
               ),
             }
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -1166,13 +1203,15 @@ impl Default for EvalEnv {
               _ => Value::False,
             })
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
         Atom::Symbol("vector".to_owned()),
         Value::CoreFunction {
           name: "vector",
-          func: |_, args| Ok(Value::Vector(args)),
+          func: |_, args| Ok(Value::new_vector(args)),
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -1184,10 +1223,11 @@ impl Default for EvalEnv {
               return error!("vector? takes 1 arg but was given {}", args.len());
             }
             Ok(match args[0] {
-              Value::Vector(_) => Value::True,
+              Value::Vector(_, _) => Value::True,
               _ => Value::False,
             })
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -1208,8 +1248,9 @@ impl Default for EvalEnv {
               }
               hashmap.insert(Atom::from(chunk[0].clone()), chunk[1].clone());
             }
-            Ok(Value::Hashmap(hashmap))
+            Ok(Value::Hashmap(hashmap, Box::new(Value::Nil)))
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -1221,10 +1262,11 @@ impl Default for EvalEnv {
               return error!("map? takes 1 arg but was given {}", args.len());
             }
             Ok(match args[0] {
-              Value::Hashmap(_) => Value::True,
+              Value::Hashmap(_, _) => Value::True,
               _ => Value::False,
             })
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -1239,7 +1281,7 @@ impl Default for EvalEnv {
               );
             }
             let mut new_hashmap = match args[0] {
-              Value::Hashmap(ref hashmap) => hashmap.clone(),
+              Value::Hashmap(ref hashmap, _) => hashmap.clone(),
               _ => return error!("assoc takes a hashmap but was given {}", args[0]),
             };
             for chunk in (&args[1..]).chunks(2) {
@@ -1248,8 +1290,9 @@ impl Default for EvalEnv {
               }
               new_hashmap.insert(Atom::from(chunk[0].clone()), chunk[1].clone());
             }
-            Ok(Value::Hashmap(new_hashmap))
+            Ok(Value::Hashmap(new_hashmap, Box::new(Value::Nil)))
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -1261,7 +1304,7 @@ impl Default for EvalEnv {
               return error!("dissoc takes at least 1 arg but was given {}", args.len());
             }
             let mut hashmap = match args[0] {
-              Value::Hashmap(ref hashmap) => hashmap.clone(),
+              Value::Hashmap(ref hashmap, _) => hashmap.clone(),
               _ => return error!("dissoc takes a hashmap but was given {}", args[0]),
             };
             for key in &args[1..] {
@@ -1270,8 +1313,9 @@ impl Default for EvalEnv {
               }
               hashmap.remove(&Atom::from(key.clone()));
             }
-            Ok(Value::Hashmap(hashmap))
+            Ok(Value::Hashmap(hashmap, Box::new(Value::Nil)))
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -1283,7 +1327,7 @@ impl Default for EvalEnv {
               return error!("get takes 2 args but was given {}", args.len());
             }
             let hashmap = match args[0] {
-              Value::Hashmap(ref hashmap) => hashmap.clone(),
+              Value::Hashmap(ref hashmap, _) => hashmap.clone(),
               Value::Nil => return Ok(Value::Nil),
               _ => return error!("get takes a hashmap but was given {}", args[0]),
             };
@@ -1295,6 +1339,7 @@ impl Default for EvalEnv {
               None => Value::Nil,
             })
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -1306,7 +1351,7 @@ impl Default for EvalEnv {
               return error!("contains? takes 2 args but was given {}", args.len());
             }
             let hashmap = match args[0] {
-              Value::Hashmap(ref hashmap) => hashmap.clone(),
+              Value::Hashmap(ref hashmap, _) => hashmap.clone(),
               Value::Nil => return Ok(Value::Nil),
               _ => return error!("contains? takes a hashmap but was given {}", args[0]),
             };
@@ -1317,6 +1362,7 @@ impl Default for EvalEnv {
               hashmap.contains_key(&Atom::from(args[1].clone())),
             ))
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -1328,14 +1374,15 @@ impl Default for EvalEnv {
               return error!("keys takes 1 arg but was given {}", args.len());
             }
             let hashmap = match args[0] {
-              Value::Hashmap(ref hashmap) => hashmap.clone(),
+              Value::Hashmap(ref hashmap, _) => hashmap.clone(),
               Value::Nil => return Ok(Value::Nil),
               _ => return error!("keys takes a hashmap but was given {}", args[0]),
             };
-            Ok(Value::List(
+            Ok(Value::new_list(
               hashmap.keys().cloned().map(Value::from).collect(),
             ))
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -1347,12 +1394,13 @@ impl Default for EvalEnv {
               return error!("vals takes 1 arg but was given {}", args.len());
             }
             let hashmap = match args[0] {
-              Value::Hashmap(ref hashmap) => hashmap.clone(),
+              Value::Hashmap(ref hashmap, _) => hashmap.clone(),
               Value::Nil => return Ok(Value::Nil),
               _ => return error!("vals takes a hashmap but was given {}", args[0]),
             };
-            Ok(Value::List(hashmap.values().cloned().collect()))
+            Ok(Value::new_list(hashmap.values().cloned().collect()))
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
       (
@@ -1364,13 +1412,264 @@ impl Default for EvalEnv {
               return error!("sequential? takes 1 arg but was given {}", args.len());
             }
             Ok(match args[0] {
-              Value::Vector(_) | Value::List(_) => Value::True,
+              Value::Vector(_, _) | Value::List(_, _) => Value::True,
               _ => Value::False,
             })
           },
+          metadata: Box::new(Value::Nil),
         },
       ),
-      (Atom::Symbol("*ARGV*".to_owned()), Value::List(vec![])),
+      (
+        Atom::Symbol("readline".to_owned()),
+        Value::CoreFunction {
+          name: "readline",
+          func: |_, args| {
+            if args.len() != 1 {
+              return error!("readline takes 1 arg but was given {}", args.len());
+            }
+            let prompt = match args[0] {
+              Value::Str(ref s) => s.clone(),
+              _ => return error!("readline takes a string but was given {}", args[0]),
+            };
+            print!("{}", prompt);
+            io::stdout().flush()?;
+            let mut input = String::new();
+            match io::stdin().read_line(&mut input) {
+              Ok(_) => {
+                if input.is_empty() || !input.ends_with('\n') {
+                  // read EOF
+                  Ok(Value::Nil)
+                } else {
+                  let len = input.len();
+                  input.remove(len - 1);
+                  Ok(Value::Str(input))
+                }
+              }
+              Err(err) => error!("{}", err),
+            }
+          },
+          metadata: Box::new(Value::Nil),
+        },
+      ),
+      (
+        Atom::Symbol("meta".to_owned()),
+        Value::CoreFunction {
+          name: "meta",
+          func: |_, args| {
+            if args.len() != 1 {
+              return error!("meta takes 1 arg but was given {}", args.len());
+            }
+            match &args[0] {
+              Value::List(_, metadata)
+              | Value::Vector(_, metadata)
+              | Value::Hashmap(_, metadata)
+              | Value::CoreFunction { metadata, .. }
+              | Value::Function { metadata, .. } => Ok(*(metadata.clone())),
+              _ => error!(
+                "meta takes a vector, list, hashmap, or function but was given {}",
+                args[0]
+              ),
+            }
+          },
+          metadata: Box::new(Value::Nil),
+        },
+      ),
+      (
+        Atom::Symbol("with-meta".to_owned()),
+        Value::CoreFunction {
+          name: "with-meta",
+          func: |_, args| {
+            if args.len() != 2 {
+              return error!("with-meta takes 2 args but was given {}", args.len());
+            }
+            match args[0] {
+              Value::List(ref list, _) => Ok(Value::List(list.clone(), Box::new(args[1].clone()))),
+              Value::Vector(ref vector, _) => {
+                Ok(Value::Vector(vector.clone(), Box::new(args[1].clone())))
+              }
+              Value::Hashmap(ref hashmap, _) => {
+                Ok(Value::Hashmap(hashmap.clone(), Box::new(args[1].clone())))
+              }
+              Value::CoreFunction { func, name, .. } => Ok(Value::CoreFunction {
+                func,
+                name,
+                metadata: Box::new(args[1].clone()),
+              }),
+              Value::Function {
+                ref params,
+                ref body,
+                ref env,
+                ref is_macro,
+                ..
+              } => Ok(Value::Function {
+                params: params.clone(),
+                body: body.clone(),
+                env: env.clone(),
+                is_macro: *is_macro,
+                metadata: Box::new(args[1].clone()),
+              }),
+              _ => error!("with-meta takes a function but was given {}", args[0]),
+            }
+          },
+          metadata: Box::new(Value::Nil),
+        },
+      ),
+      (
+        Atom::Symbol("time-ms".to_owned()),
+        Value::CoreFunction {
+          name: "time-ms",
+          func: |_, args| {
+            if !args.is_empty() {
+              return error!("time-ms takes 0 args but was given {}", args.len());
+            }
+            let time = SystemTime::now()
+              .duration_since(SystemTime::UNIX_EPOCH)
+              .expect("unix time");
+            Ok(Value::Int(
+              (time.as_secs() * 1000 + u64::from(time.subsec_millis())) as isize,
+            ))
+          },
+          metadata: Box::new(Value::Nil),
+        },
+      ),
+      (
+        Atom::Symbol("conj".to_owned()),
+        Value::CoreFunction {
+          name: "conj",
+          func: |_, args| {
+            if args.is_empty() {
+              return error!("conj takes at least 1 arg but was given {}", args.len());
+            }
+            match args[0] {
+              Value::List(ref list, _) => {
+                let mut new_list = list.clone();
+                for arg in &args[1..] {
+                  new_list.insert(0, arg.clone());
+                }
+                Ok(Value::new_list(new_list))
+              }
+              Value::Vector(ref vector, _) => {
+                let mut new_vector = vector.clone();
+                new_vector.extend_from_slice(&args[1..]);
+                Ok(Value::new_vector(new_vector))
+              }
+              _ => error!(
+                "conj takes either a list or vector but was given {}",
+                args[0]
+              ),
+            }
+          },
+          metadata: Box::new(Value::Nil),
+        },
+      ),
+      (
+        Atom::Symbol("string?".to_owned()),
+        Value::CoreFunction {
+          name: "string?",
+          func: |_, args| {
+            if args.len() != 1 {
+              return error!("string? takes 1 arg but was given {}", args.len());
+            }
+            Ok(match args[0] {
+              Value::Str(_) => Value::True,
+              _ => Value::False,
+            })
+          },
+          metadata: Box::new(Value::Nil),
+        },
+      ),
+      (
+        Atom::Symbol("number?".to_owned()),
+        Value::CoreFunction {
+          name: "number?",
+          func: |_, args| {
+            if args.len() != 1 {
+              return error!("number? takes 1 arg but was given {}", args.len());
+            }
+            Ok(match args[0] {
+              Value::Int(_) => Value::True,
+              _ => Value::False,
+            })
+          },
+          metadata: Box::new(Value::Nil),
+        },
+      ),
+      (
+        Atom::Symbol("fn?".to_owned()),
+        Value::CoreFunction {
+          name: "fn?",
+          func: |_, args| {
+            if args.len() != 1 {
+              return error!("fn? takes 1 arg but was given {}", args.len());
+            }
+            Ok(match args[0] {
+              Value::Function { is_macro, .. } => Value::from(!is_macro),
+              Value::CoreFunction { .. } => Value::True,
+              _ => Value::False,
+            })
+          },
+          metadata: Box::new(Value::Nil),
+        },
+      ),
+      (
+        Atom::Symbol("macro?".to_owned()),
+        Value::CoreFunction {
+          name: "macro?",
+          func: |_, args| {
+            if args.len() != 1 {
+              return error!("macro? takes 1 arg but was given {}", args.len());
+            }
+            Ok(match args[0] {
+              Value::Function { is_macro, .. } => Value::from(is_macro),
+              _ => Value::False,
+            })
+          },
+          metadata: Box::new(Value::Nil),
+        },
+      ),
+      (
+        Atom::Symbol("seq".to_owned()),
+        Value::CoreFunction {
+          name: "seq",
+          func: |_, args| {
+            if args.len() != 1 {
+              return error!("seq takes 1 arg but was given {}", args.len());
+            }
+            Ok(match args[0] {
+              Value::List(ref list, _) => if list.is_empty() {
+                Value::Nil
+              } else {
+                Value::new_list(list.clone())
+              },
+              Value::Vector(ref vector, _) => if vector.is_empty() {
+                Value::Nil
+              } else {
+                Value::new_list(vector.clone())
+              },
+              Value::Str(ref string) => {
+                if string.is_empty() {
+                  Value::Nil
+                } else {
+                  Value::new_list(string.chars().map(|c| Value::Str(c.to_string())).collect())
+                }
+              }
+              Value::Nil => Value::Nil,
+              _ => {
+                return error!(
+                  "seq takes a list, vector, string, or nil but was given {}",
+                  args[0]
+                )
+              }
+            })
+          },
+          metadata: Box::new(Value::Nil),
+        },
+      ),
+      (Atom::Symbol("*ARGV*".to_owned()), Value::new_list(vec![])),
+      (
+        Atom::Symbol("*host-language*".to_owned()),
+        Value::Str("rust".to_owned()),
+      ),
     ];
     EvalEnv::new(HashMap::new(), None, binds)
   }
@@ -1386,7 +1685,7 @@ mod tests {
     assert_eq!(
       eval(
         eval_env,
-        Value::List(vec![
+        Value::new_list(vec![
           Value::Symbol("+".to_owned()),
           Value::Int(1),
           Value::Int(2),
@@ -1403,10 +1702,10 @@ mod tests {
     assert_eq!(
       eval(
         eval_env,
-        Value::List(vec![
+        Value::new_list(vec![
           Value::Symbol("+".to_owned()),
           Value::Int(1),
-          Value::List(vec![
+          Value::new_list(vec![
             Value::Symbol("*".to_owned()),
             Value::Int(2),
             Value::Int(3),
@@ -1424,7 +1723,7 @@ mod tests {
     assert!(
       eval(
         eval_env.clone(),
-        Value::List(vec![
+        Value::new_list(vec![
           Value::Symbol("def!".to_owned()),
           Value::Symbol("a".to_owned()),
           Value::Int(6),
@@ -1439,10 +1738,10 @@ mod tests {
     assert!(
       eval(
         eval_env.clone(),
-        Value::List(vec![
+        Value::new_list(vec![
           Value::Symbol("def!".to_owned()),
           Value::Symbol("b".to_owned()),
-          Value::List(vec![
+          Value::new_list(vec![
             Value::Symbol("+".to_owned()),
             Value::Symbol("a".to_owned()),
             Value::Int(2),
@@ -1454,7 +1753,7 @@ mod tests {
     assert_eq!(
       eval(
         eval_env.clone(),
-        Value::List(vec![
+        Value::new_list(vec![
           Value::Symbol("+".to_owned()),
           Value::Symbol("a".to_owned()),
           Value::Symbol("b".to_owned()),
@@ -1471,19 +1770,19 @@ mod tests {
     assert_eq!(
       eval(
         eval_env,
-        Value::List(vec![
+        Value::new_list(vec![
           Value::Symbol("let*".to_owned()),
-          Value::List(vec![
+          Value::new_list(vec![
             Value::Symbol("c".to_owned()),
             Value::Int(2),
             Value::Symbol("d".to_owned()),
-            Value::List(vec![
+            Value::new_list(vec![
               Value::Symbol("+".to_owned()),
               Value::Symbol("c".to_owned()),
               Value::Int(2),
             ]),
           ]),
-          Value::List(vec![
+          Value::new_list(vec![
             Value::Symbol("+".to_owned()),
             Value::Symbol("c".to_owned()),
             Value::Symbol("d".to_owned()),
@@ -1501,7 +1800,7 @@ mod tests {
     assert!(
       eval(
         eval_env,
-        Value::List(vec![
+        Value::new_list(vec![
           Value::Symbol("def!".to_owned()),
           Value::Keyword("a".to_owned()),
           Value::Int(6),
@@ -1517,10 +1816,10 @@ mod tests {
     assert!(
       eval(
         eval_env,
-        Value::List(vec![
+        Value::new_list(vec![
           Value::Symbol("let*".to_owned()),
-          Value::List(vec![Value::Keyword("c".to_owned()), Value::Int(2)]),
-          Value::List(vec![
+          Value::new_list(vec![Value::Keyword("c".to_owned()), Value::Int(2)]),
+          Value::new_list(vec![
             Value::Symbol("+".to_owned()),
             Value::Symbol("c".to_owned()),
             Value::Int(1),
@@ -1537,7 +1836,7 @@ mod tests {
     assert_eq!(
       eval(
         eval_env,
-        Value::List(vec![Value::Symbol("do".to_owned())]),
+        Value::new_list(vec![Value::Symbol("do".to_owned())]),
         false
       ),
       Ok(Value::Nil)
@@ -1550,7 +1849,7 @@ mod tests {
     assert_eq!(
       eval(
         eval_env,
-        Value::List(vec![Value::Symbol("do".to_owned()), Value::Int(1)]),
+        Value::new_list(vec![Value::Symbol("do".to_owned()), Value::Int(1)]),
         false
       ),
       Ok(Value::Int(1))
@@ -1563,9 +1862,9 @@ mod tests {
     assert_eq!(
       eval(
         eval_env,
-        Value::List(vec![
+        Value::new_list(vec![
           Value::Symbol("if".to_owned()),
-          Value::List(vec![
+          Value::new_list(vec![
             Value::Symbol("if".to_owned()),
             Value::Nil,
             Value::False,
@@ -1586,10 +1885,10 @@ mod tests {
     assert_eq!(
       eval(
         eval_env,
-        Value::List(vec![
-          Value::List(vec![
+        Value::new_list(vec![
+          Value::new_list(vec![
             Value::Symbol("fn*".to_owned()),
-            Value::List(vec![Value::Symbol("a".to_owned())]),
+            Value::new_list(vec![Value::Symbol("a".to_owned())]),
             Value::Symbol("a".to_owned()),
           ]),
           Value::Int(7),
@@ -1606,14 +1905,14 @@ mod tests {
     assert_eq!(
       eval(
         eval_env,
-        Value::List(vec![
-          Value::List(vec![
+        Value::new_list(vec![
+          Value::new_list(vec![
             Value::Symbol("fn*".to_owned()),
-            Value::List(vec![
+            Value::new_list(vec![
               Value::Symbol("a".to_owned()),
               Value::Symbol("b".to_owned()),
             ]),
-            Value::List(vec![
+            Value::new_list(vec![
               Value::Symbol("+".to_owned()),
               Value::Symbol("a".to_owned()),
               Value::Symbol("b".to_owned()),
@@ -1634,14 +1933,14 @@ mod tests {
     assert!(
       eval(
         eval_env,
-        Value::List(vec![
-          Value::List(vec![
+        Value::new_list(vec![
+          Value::new_list(vec![
             Value::Symbol("fn*".to_owned()),
-            Value::List(vec![
+            Value::new_list(vec![
               Value::Symbol("a".to_owned()),
               Value::Symbol("b".to_owned()),
             ]),
-            Value::List(vec![
+            Value::new_list(vec![
               Value::Symbol("+".to_owned()),
               Value::Symbol("a".to_owned()),
               Value::Symbol("b".to_owned()),
@@ -1660,15 +1959,15 @@ mod tests {
     assert_eq!(
       eval(
         eval_env,
-        Value::List(vec![
-          Value::List(vec![
-            Value::List(vec![
+        Value::new_list(vec![
+          Value::new_list(vec![
+            Value::new_list(vec![
               Value::Symbol("fn*".to_owned()),
-              Value::List(vec![Value::Symbol("a".to_owned())]),
-              Value::List(vec![
+              Value::new_list(vec![Value::Symbol("a".to_owned())]),
+              Value::new_list(vec![
                 Value::Symbol("fn*".to_owned()),
-                Value::List(vec![Value::Symbol("b".to_owned())]),
-                Value::List(vec![
+                Value::new_list(vec![Value::Symbol("b".to_owned())]),
+                Value::new_list(vec![
                   Value::Symbol("+".to_owned()),
                   Value::Symbol("a".to_owned()),
                   Value::Symbol("b".to_owned()),

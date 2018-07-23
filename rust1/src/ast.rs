@@ -174,9 +174,9 @@ impl fmt::Display for Atom {
 
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub enum Value {
-  List(Vec<Value>),
-  Vector(Vec<Value>),
-  Hashmap(HashMap<Atom, Value>),
+  List(Vec<Value>, Box<Value>),
+  Vector(Vec<Value>, Box<Value>),
+  Hashmap(HashMap<Atom, Value>, Box<Value>),
   Str(String),
   Keyword(String),
   Symbol(String),
@@ -187,20 +187,30 @@ pub enum Value {
   CoreFunction {
     name: &'static str,
     func: fn(EvalEnv, Vec<Value>) -> MalResult<Value>,
+    metadata: Box<Value>,
   },
   Function {
     params: Vec<Atom>, // must be Symbols
     body: Box<Value>,
     env: EvalEnv,
     is_macro: bool,
+    metadata: Box<Value>,
   },
   Atom(Rc<RefCell<Value>>),
 }
 
 impl Value {
+  pub fn new_list(list: Vec<Value>) -> Value {
+    Value::List(list, Box::new(Value::Nil))
+  }
+
+  pub fn new_vector(vector: Vec<Value>) -> Value {
+    Value::Vector(vector, Box::new(Value::Nil))
+  }
+
   pub fn string(&self, readable: bool) -> String {
     match self {
-      Value::List(list) => {
+      Value::List(list, _) => {
         let list_str = list
           .into_iter()
           .map(|l| l.string(readable))
@@ -208,7 +218,7 @@ impl Value {
           .join(" ");
         format!("({})", list_str)
       }
-      Value::Vector(vec) => {
+      Value::Vector(vec, _) => {
         let vec_str = vec
           .into_iter()
           .map(|l| l.string(readable))
@@ -216,7 +226,7 @@ impl Value {
           .join(" ");
         format!("[{}]", vec_str)
       }
-      Value::Hashmap(hm) => {
+      Value::Hashmap(hm, _) => {
         let kv_pair_str: String = hm
           .into_iter()
           .map(|(k, v)| vec![k.string(readable), v.string(readable)])
@@ -236,7 +246,7 @@ impl Value {
       Value::True => "true".to_owned(),
       Value::False => "false".to_owned(),
       Value::Nil => "nil".to_owned(),
-      Value::CoreFunction { name, func } => format!("core func {} {:?}", name, func),
+      Value::CoreFunction { name, func, .. } => format!("core func {} {:?}", name, func),
       Value::Function { params, body, .. } => format!(
         "func ({}) {}",
         params
@@ -276,34 +286,38 @@ impl Value {
       } else {
         val
       },
-      Value::List(list) => Value::List(
+      Value::List(list, metadata) => Value::List(
         list
           .into_iter()
           .map(|l| Value::subst(l, from, to))
           .collect(),
+        metadata,
       ),
-      Value::Vector(list) => Value::List(
+      Value::Vector(list, metadata) => Value::List(
         list
           .into_iter()
           .map(|l| Value::subst(l, from, to))
           .collect(),
+        metadata,
       ),
-      Value::Hashmap(mut hashmap) => {
+      Value::Hashmap(mut hashmap, metadata) => {
         for v in hashmap.values_mut() {
           *v = Value::subst(v.clone(), from, to);
         }
-        Value::Hashmap(hashmap)
+        Value::Hashmap(hashmap, metadata)
       }
       Value::Function {
         params,
         body,
         env,
         is_macro,
+        metadata,
       } => Value::Function {
         params,
         body: Box::new(Value::subst(*body, from, to)),
         env,
         is_macro,
+        metadata,
       },
       _ => val,
     }
@@ -318,17 +332,18 @@ impl Value {
 
   pub fn list_eq(&self, other: &Value) -> bool {
     match (self, other) {
-      (Value::List(list), Value::Vector(vec)) | (Value::Vector(vec), Value::List(list)) => {
+      (Value::List(list, _), Value::Vector(vec, _))
+      | (Value::Vector(vec, _), Value::List(list, _)) => {
         list.len() == vec.len() && vec.iter().zip(list.iter()).all(|(v, l)| v.list_eq(l))
       }
-      (Value::Hashmap(ref hm1), Value::Hashmap(ref hm2)) => hashmap_list_eq(hm1, hm2),
+      (Value::Hashmap(ref hm1, _), Value::Hashmap(ref hm2, _)) => hashmap_list_eq(hm1, hm2),
       _ => self == other,
     }
   }
 
   pub fn is_pair(&self) -> bool {
     match self {
-      Value::List(list) | Value::Vector(list) => !list.is_empty(),
+      Value::List(list, _) | Value::Vector(list, _) => !list.is_empty(),
       _ => false,
     }
   }
@@ -360,14 +375,20 @@ impl From<bool> for Value {
 impl From<Ast> for Value {
   fn from(ast: Ast) -> Self {
     match ast {
-      Ast::List(list) => Value::List(list.into_iter().map(Value::from).collect::<Vec<Value>>()),
-      Ast::Vector(vec) => Value::Vector(vec.into_iter().map(Value::from).collect::<Vec<Value>>()),
+      Ast::List(list) => Value::List(
+        list.into_iter().map(Value::from).collect::<Vec<Value>>(),
+        Box::new(Value::Nil),
+      ),
+      Ast::Vector(vec) => Value::Vector(
+        vec.into_iter().map(Value::from).collect::<Vec<Value>>(),
+        Box::new(Value::Nil),
+      ),
       Ast::Hashmap(hm) => {
         let mut hashmap = HashMap::new();
         for (k, v) in hm {
           hashmap.insert(Atom::from(k), Value::from(v));
         }
-        Value::Hashmap(hashmap)
+        Value::Hashmap(hashmap, Box::new(Value::Nil))
       }
       Ast::Str(s) => Value::Str(s),
       Ast::Keyword(kw) => Value::Keyword(kw),
@@ -376,25 +397,37 @@ impl From<Ast> for Value {
       Ast::True => Value::True,
       Ast::False => Value::False,
       Ast::Nil => Value::Nil,
-      Ast::Deref(value) => {
-        Value::List(vec![Value::Symbol("deref".to_owned()), Value::from(*value)])
-      }
-      Ast::Quote(value) => {
-        Value::List(vec![Value::Symbol("quote".to_owned()), Value::from(*value)])
-      }
-      Ast::Quasiquote(value) => Value::List(vec![
-        Value::Symbol("quasiquote".to_owned()),
-        Value::from(*value),
-      ]),
-      Ast::Unquote(value) => Value::List(vec![
-        Value::Symbol("unquote".to_owned()),
-        Value::from(*value),
-      ]),
-      Ast::SpliceUnquote(value) => Value::List(vec![
-        Value::Symbol("splice-unquote".to_owned()),
-        Value::from(*value),
-      ]),
-      _ => unimplemented!(),
+      Ast::Deref(value) => Value::List(
+        vec![Value::Symbol("deref".to_owned()), Value::from(*value)],
+        Box::new(Value::Nil),
+      ),
+      Ast::Quote(value) => Value::List(
+        vec![Value::Symbol("quote".to_owned()), Value::from(*value)],
+        Box::new(Value::Nil),
+      ),
+      Ast::Quasiquote(value) => Value::List(
+        vec![Value::Symbol("quasiquote".to_owned()), Value::from(*value)],
+        Box::new(Value::Nil),
+      ),
+      Ast::Unquote(value) => Value::List(
+        vec![Value::Symbol("unquote".to_owned()), Value::from(*value)],
+        Box::new(Value::Nil),
+      ),
+      Ast::SpliceUnquote(value) => Value::List(
+        vec![
+          Value::Symbol("splice-unquote".to_owned()),
+          Value::from(*value),
+        ],
+        Box::new(Value::Nil),
+      ),
+      Ast::WithMeta(val, meta) => Value::List(
+        vec![
+          Value::Symbol("with-meta".to_owned()),
+          Value::from(*val),
+          Value::from(*meta),
+        ],
+        Box::new(Value::Nil),
+      ),
     }
   }
 }

@@ -93,7 +93,7 @@ fn main() -> MalResult<()> {
   } else {
     eval_env.set(
       Atom::Symbol("*ARGV*".to_owned()),
-      Value::List(
+      Value::new_list(
         (&args[1..])
           .to_vec()
           .into_iter()
